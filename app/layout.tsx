@@ -3,7 +3,6 @@ import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
 import { Toaster } from '@/components/ui/sonner';
 import { ThemeProvider } from '@/components/providers/theme-provider';
-import { Navigation } from '@/components/navigation/navigation';
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -22,8 +21,7 @@ export default function RootLayout({
       <body className={inter.className}>
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
           <div className="min-h-screen bg-background">
-            <Navigation />
-            <main className="pb-16 sm:pb-0 sm:pl-64">
+            <main className="pb-16">
               {children}
             </main>
           </div>
