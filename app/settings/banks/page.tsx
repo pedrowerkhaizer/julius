@@ -22,14 +22,22 @@ export default function BanksPage() {
       return;
     }
     setLoading(true);
-    fetch(`http://localhost:3001/pluggy/${itemId}/accounts`)
-      .then(res => res.json())
-      .then(data => {
-        setAccounts(data.accounts || data);
+    Promise.all([
+      fetch(`http://localhost:3001/pluggy/${itemId}/transactions`).then(res => res.json()),
+      fetch(`http://localhost:3001/pluggy/${itemId}/accounts`).then(res => res.json()),
+    ])
+      .then(([transactionsData, accountsData]) => {
+        setAccounts(
+          Array.isArray(accountsData.accounts)
+            ? accountsData.accounts
+            : Array.isArray(accountsData)
+              ? accountsData
+              : []
+        );
         setLoading(false);
       })
       .catch(() => {
-        toast.error("Erro ao buscar contas Pluggy");
+        toast.error("Erro ao buscar dados Pluggy");
         setLoading(false);
       });
   }, [itemId]);
@@ -131,12 +139,7 @@ export default function BanksPage() {
         </div>
 
         {/* Botão para conectar novo banco */}
-        <PluggyConnectButton
-          onSuccess={item => {
-            localStorage.setItem("pluggy_itemId", item.id);
-            // Redirecione ou atualize a página para buscar os dados reais
-          }}
-        />
+        <PluggyConnectButton onConnected={() => window.location.reload()} />
       </div>
     </div>
   );

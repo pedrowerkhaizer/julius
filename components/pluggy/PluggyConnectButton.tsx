@@ -20,7 +20,8 @@ export default function PluggyConnectButton({ onConnected }: { onConnected?: () 
         <PluggyConnect
           connectToken={connectToken}
           includeSandbox={false}
-          onSuccess={item => {
+          onSuccess={({ item }) => {
+            console.log("Pluggy item conectado:", item);
             localStorage.setItem("pluggy_itemId", item.id);
             if (onConnected) onConnected();
             // Você pode também forçar um reload: window.location.reload();
