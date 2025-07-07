@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Calendar, TrendingUp, TrendingDown, Plus, AlertCircle, CreditCard, LogOut, Settings, Pencil, Trash2, MoreVertical } from "lucide-react";
+import { Calendar, TrendingUp, TrendingDown, Plus, AlertCircle, CreditCard, LogOut, Settings, Pencil, Trash2, MoreVertical, Building2 } from "lucide-react";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { supabase } from "@/lib/supabaseClient";
@@ -22,6 +22,12 @@ import {
 import { MessageCircle, User2 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { addMonths, startOfMonth, endOfMonth, isWithinInterval, parseISO } from "date-fns";
+import { getUserBankAccounts, BankAccount, getBankName, getAccountTypeName, updateBankAccount, createBankAccount } from '@/lib/bankAccounts';
+
+// Remover a interface BankAccount local
+// Em todos os lugares, usar apenas BankAccount importado da lib
+// Substituir account.accountType por account.account_type
+// Substituir todos os usos de bankAccounts para refletir contas reais do Supabase
 
 // Tipo para entrada/saída
 interface Entry {
@@ -62,6 +68,35 @@ const creditCards = [
   { id: "outro", name: "Outro" },
 ];
 
+// Adicionar utilitário no topo:
+function formatDateFriendly(date: string | Date): string {
+  const d = typeof date === 'string' ? new Date(date) : date;
+  const now = new Date();
+  const day = d.getDate().toString().padStart(2, '0');
+  const month = d.toLocaleString('pt-BR', { month: 'short' });
+  const year = d.getFullYear();
+  if (year === now.getFullYear()) {
+    return `${day} ${month}`;
+  } else {
+    return `${day} ${month} ${year}`;
+  }
+}
+
+// Adicione no topo:
+function formatTimelineDate(date: string | Date): string {
+  const d = typeof date === 'string' ? new Date(date) : date;
+  const now = new Date();
+  const dayOfWeek = d.toLocaleString('pt-BR', { weekday: 'long' });
+  const day = d.getDate().toString().padStart(2, '0');
+  const month = d.toLocaleString('pt-BR', { month: 'long' });
+  const year = d.getFullYear();
+  if (year === now.getFullYear()) {
+    return `${dayOfWeek}, ${day} de ${month}`;
+  } else {
+    return `${dayOfWeek}, ${day} de ${month} de ${year}`;
+  }
+}
+
 export default function EventsPage() {
   const router = useRouter();
   // Entradas e saídas
@@ -96,13 +131,16 @@ export default function EventsPage() {
   const [subscriptionCardDueDay, setSubscriptionCardDueDay] = useState(10);
 
   // Estado para dialog de detalhes dos KPIs
-  const [openKpiDialog, setOpenKpiDialog] = useState<null | "income" | "expense" | "fixed" | "variable" | "subscription" | "performance">(
+  const [openKpiDialog, setOpenKpiDialog] = useState<null | "income" | "expense" | "fixed" | "variable" | "subscription" | "performance" | "balance" | "projected">(
     null
   );
 
   // Estado do usuário
   const [user, setUser] = useState<any>(null);
   const [userLoading, setUserLoading] = useState(true);
+
+  // Estados para contas bancárias
+  const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
 
   // Estados para edição/remoção
   const [editingEvent, setEditingEvent] = useState<Entry | null>(null);
@@ -185,10 +223,21 @@ export default function EventsPage() {
     }
   }
 
+  // Substituir a função fetchBankAccounts para buscar do Supabase
+  async function fetchBankAccounts() {
+    try {
+      const accounts = await getUserBankAccounts();
+      setBankAccounts(accounts);
+    } catch (error) {
+      console.error('Erro ao carregar contas bancárias:', error);
+    }
+  }
+
   // Carrega eventos do Supabase ao montar
   useEffect(() => {
     fetchTransactions();
     fetchRecurrenceExceptions();
+    fetchBankAccounts();
   }, []);
 
   useEffect(() => {
@@ -452,6 +501,75 @@ export default function EventsPage() {
   // Novo KPI: performance do mês
   const monthPerformance = totalIncome - (totalFixedExpense + totalVariableExpense + totalSubscriptionExpense);
 
+  // Cálculo do saldo total das contas
+  const totalAccountBalance = bankAccounts.reduce((sum, account) => sum + account.balance, 0);
+
+  // Novo estado para data de projeção
+  const [projectionDate, setProjectionDate] = useState(() => {
+    const now = new Date();
+    return endOfMonth(now).toISOString().split('T')[0];
+  });
+
+  // Função para calcular saldo projetado até a data de projeção, respeitando a data do saldo de cada conta
+  function calculateProjectedBalance() {
+    // 1. Saldo inicial: soma dos saldos das contas
+    const saldoInicial = bankAccounts.reduce((sum, acc) => sum + acc.balance, 0);
+
+    // 2. Data de referência: maior balance_date das contas (ou hoje se não houver)
+    let saldoData = today;
+    if (bankAccounts.length > 0) {
+      saldoData = bankAccounts.reduce((max, acc) => {
+        if (acc.balance_date && new Date(acc.balance_date) > max) {
+          return new Date(acc.balance_date);
+        }
+        return max;
+      }, new Date(bankAccounts[0].balance_date || today));
+    }
+    const projDate = parseISO(projectionDate);
+
+    // 3. Gera todas as ocorrências de eventos futuras (após saldoData até projDate)
+    const projectedEvents: { type: 'income' | 'expense'; amount: number; date: Date }[] = [];
+    events.forEach(event => {
+      if (event.isRecurring) {
+        let cursor = new Date(saldoData);
+        while (cursor <= projDate) {
+          if (event.recurrenceEndDate && new Date(event.recurrenceEndDate) < cursor) break;
+          let dateObj: Date;
+          if (event.expenseType === "subscription" && event.subscriptionBillingDay && event.subscriptionCardDueDay) {
+            const billingDay = event.subscriptionBillingDay;
+            const cardDueDay = event.subscriptionCardDueDay;
+            const year = cursor.getFullYear();
+            const month = cursor.getMonth();
+            if (billingDay > cardDueDay) {
+              dateObj = new Date(year, month + 1, billingDay);
+            } else {
+              dateObj = new Date(year, month, billingDay);
+            }
+          } else {
+            dateObj = new Date(cursor.getFullYear(), cursor.getMonth(), event.day!);
+          }
+          if (dateObj > saldoData && dateObj <= projDate) {
+            projectedEvents.push({ type: event.type, amount: event.amount, date: dateObj });
+          }
+          cursor = addMonths(cursor, 1);
+        }
+      } else if (event.date) {
+        const dateObj = new Date(event.date);
+        if (dateObj > saldoData && dateObj <= projDate) {
+          projectedEvents.push({ type: event.type, amount: event.amount, date: dateObj });
+        }
+      }
+    });
+
+    // 4. Soma entradas e saídas
+    const projectedIncomes = projectedEvents.filter(e => e.type === 'income').reduce((sum, e) => sum + e.amount, 0);
+    const projectedExpenses = projectedEvents.filter(e => e.type === 'expense').reduce((sum, e) => sum + e.amount, 0);
+
+    // 5. Saldo projetado
+    return saldoInicial + projectedIncomes - projectedExpenses;
+  }
+  const projectedBalance = calculateProjectedBalance();
+
   // Função para abrir dialog de edição
   function handleEdit(event: Entry, occurrenceDate?: string) {
     console.log('[handleEdit] event:', event, 'occurrenceDate:', occurrenceDate);
@@ -481,7 +599,7 @@ export default function EventsPage() {
   }
 
   // Função para salvar edição
-  async function handleSaveEdit(edited: Partial<Entry>) {
+  async function handleSaveEditTransaction(edited: Partial<Entry>) {
     if (!editingEvent) return;
     console.log('[handleSaveEdit] editingEvent:', editingEvent, 'editingMode:', editingMode, 'editingOccurrenceDate:', editingOccurrenceDate, 'edited:', edited);
     if (editingEvent.isRecurring && editingMode === "single" && editingOccurrenceDate) {
@@ -585,9 +703,72 @@ export default function EventsPage() {
     }
   };
 
+  // 1. Adicionar estados para edição de conta e novo saldo
+  const [editingAccountId, setEditingAccountId] = useState<string | null>(null);
+  const [editBalance, setEditBalance] = useState<number | null>(null);
+  const [editBalanceDate, setEditBalanceDate] = useState<string>("");
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [showAddAccountDialog, setShowAddAccountDialog] = useState(false);
+  const [newAccount, setNewAccount] = useState<Partial<BankAccount>>({
+    name: '',
+    bank: '',
+    account_type: 'checking',
+    balance: 0,
+    balance_date: new Date().toISOString().split('T')[0]
+  });
+
+  // 2. Função para iniciar edição
+  function startEdit(account: BankAccount) {
+    setEditingAccountId(account.id);
+    setEditBalance(account.balance);
+    setEditBalanceDate(account.balance_date || new Date().toISOString().split('T')[0]);
+  }
+
+  // 3. Função para salvar edição
+  async function handleSaveEdit(accountId: string) {
+    setSavingEdit(true);
+    try {
+      const todayStr = new Date().toISOString().split('T')[0];
+      const updated = await updateBankAccount(accountId, {
+        balance: editBalance ?? 0,
+        balance_date: todayStr
+      });
+      setBankAccounts(prev => prev.map(acc => acc.id === updated.id ? updated : acc));
+      setEditingAccountId(null);
+      toast.success('Saldo atualizado!');
+    } catch (err: any) {
+      toast.error(err.message || 'Erro ao atualizar saldo');
+    } finally {
+      setSavingEdit(false);
+    }
+  }
+
+  // 4. Função para adicionar nova conta
+  async function handleAddAccountDialog() {
+    setSavingEdit(true);
+    try {
+      const todayStr = new Date().toISOString().split('T')[0];
+      const created = await createBankAccount({
+        name: newAccount.name!,
+        bank: newAccount.bank!,
+        account_type: newAccount.account_type as 'checking' | 'savings',
+        balance: Number(newAccount.balance),
+        balance_date: todayStr
+      });
+      setBankAccounts(prev => [...prev, created]);
+      setShowAddAccountDialog(false);
+      setNewAccount({ name: '', bank: '', account_type: 'checking', balance: 0 });
+      toast.success('Conta adicionada!');
+    } catch (err: any) {
+      toast.error(err.message || 'Erro ao adicionar conta');
+    } finally {
+      setSavingEdit(false);
+    }
+  }
+
   return (
     <div className="min-h-screen bg-background pt-16 sm:pt-0">
-      <div className="max-w-4xl mx-auto p-4 sm:p-6 lg:p-8">
+      <div className="w-full max-w-7xl mx-auto px-2 sm:px-4 lg:px-8">
         {/* Header */}
         <div className="mb-8 flex items-center justify-between gap-4 flex-wrap">
           <div>
@@ -920,7 +1101,7 @@ export default function EventsPage() {
                 </DropdownMenuLabel>
                 <div className="px-3 pb-1 text-xs text-muted-foreground">
                   {user?.created_at && (
-                    <>Membro desde {new Date(user.created_at).toLocaleDateString("pt-BR", { month: "short", year: "numeric" })}</>
+                    <>Membro desde {formatDateFriendly(user.created_at || '')}</>
                   )}
                 </div>
                 <DropdownMenuSeparator />
@@ -937,7 +1118,7 @@ export default function EventsPage() {
         </div>
 
         {/* KPIs - responsivo: 1/2/3 por linha */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-12">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-12">
           <Card onClick={() => setOpenKpiDialog("income")} className="cursor-pointer hover:ring-2 hover:ring-lime-400 transition">
             <CardHeader className="pb-3">
               <div className="flex items-center gap-2">
@@ -1040,7 +1221,7 @@ export default function EventsPage() {
                 <span className="inline-block w-5 h-5 rounded-full flex items-center justify-center" style={{ background: monthPerformance > 0 ? '#22c55e' : monthPerformance < 0 ? '#ef4444' : '#64748b' }}>
                   <span className="text-white font-bold">{monthPerformance > 0 ? '+' : monthPerformance < 0 ? '-' : '='}</span>
                 </span>
-                <CardTitle className="text-lg">Performance</CardTitle>
+                <CardTitle className="text-lg">Performance do Mês</CardTitle>
               </div>
             </CardHeader>
             <CardContent>
@@ -1052,6 +1233,46 @@ export default function EventsPage() {
               </div>
               <p className="text-sm text-muted-foreground mt-1">
                 {monthPerformance > 0 ? "Saldo positivo no período" : monthPerformance < 0 ? "Saldo negativo no período" : "Equilíbrio no período"}
+              </p>
+            </CardContent>
+          </Card>
+          {/* KPI Saldo das Contas */}
+          <Card onClick={() => setOpenKpiDialog("balance")} className="cursor-pointer hover:ring-2 hover:ring-blue-400 transition">
+            <CardHeader className="pb-3">
+              <div className="flex items-center gap-2">
+                <Building2 className="w-5 h-5 text-blue-500" />
+                <CardTitle className="text-lg">Saldo das Contas</CardTitle>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-foreground">
+                {new Intl.NumberFormat("pt-BR", {
+                  style: "currency",
+                  currency: "BRL",
+                }).format(totalAccountBalance)}
+              </div>
+              <p className="text-sm text-muted-foreground mt-1">
+                {bankAccounts.length === 0 ? "Nenhuma conta configurada" : `${bankAccounts.length} conta(s) configurada(s)`}
+              </p>
+            </CardContent>
+          </Card>
+          {/* KPI Saldo Projetado */}
+          <Card onClick={() => setOpenKpiDialog("projected")} className="cursor-pointer hover:ring-2 hover:ring-blue-400 transition">
+            <CardHeader className="pb-3">
+              <div className="flex items-center gap-2">
+                <Building2 className="w-5 h-5 text-blue-500" />
+                <CardTitle className="text-lg">Saldo Projetado</CardTitle>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-foreground">
+                {new Intl.NumberFormat("pt-BR", {
+                  style: "currency",
+                  currency: "BRL",
+                }).format(projectedBalance)}
+              </div>
+              <p className="text-sm text-muted-foreground mt-1">
+                Até {formatDateFriendly(projectionDate)}
               </p>
             </CardContent>
           </Card>
@@ -1172,6 +1393,188 @@ export default function EventsPage() {
             </div>
           </DialogContent>
         </Dialog>
+        <Dialog open={openKpiDialog === "balance"} onOpenChange={v => setOpenKpiDialog(v ? "balance" : null)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Detalhes do Saldo das Contas</DialogTitle>
+            </DialogHeader>
+            <div className="mb-2 text-sm text-muted-foreground">
+              Saldo total de todas as suas contas bancárias
+            </div>
+            {bankAccounts.length === 0 ? (
+              <div className="text-center py-4">
+                <Building2 className="w-12 h-12 text-muted-foreground mx-auto mb-2" />
+                <p className="text-muted-foreground">Nenhuma conta configurada</p>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Configure suas contas em Ajustes → Contas Bancárias
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {bankAccounts.map(account => (
+                  <div key={account.id} className="flex items-center justify-between p-3 border rounded-lg">
+                    <div>
+                      <div className="font-medium">{account.name}</div>
+                      <div className="text-sm text-muted-foreground">
+                        {getBankName(account.bank)} • {getAccountTypeName(account.account_type)}
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        Última atualização: {formatDateFriendly(account.balance_date || '')}
+                      </div>
+                    </div>
+                    <div className="text-right flex items-center gap-2">
+                      {editingAccountId === account.id ? (
+                        <>
+                          <Input
+                            type="number"
+                            value={editBalance ?? ''}
+                            onChange={e => setEditBalance(Number(e.target.value))}
+                            className="w-24"
+                            autoFocus
+                          />
+                          <Button size="sm" onClick={() => handleSaveEdit(account.id)} disabled={savingEdit}>
+                            Salvar
+                          </Button>
+                          <Button size="sm" variant="outline" onClick={() => setEditingAccountId(null)} disabled={savingEdit}>
+                            Cancelar
+                          </Button>
+                        </>
+                      ) : (
+                        <>
+                          <span className="font-semibold">
+                            {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(account.balance)}
+                          </span>
+                          <Button variant="ghost" size="icon" onClick={() => startEdit(account)}>
+                            <Pencil className="w-4 h-4" />
+                          </Button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                ))}
+                <div className="border-t pt-3 mt-3">
+                  <div className="flex items-center justify-between font-bold">
+                    <span>Total:</span>
+                    <span>
+                      {new Intl.NumberFormat("pt-BR", {
+                        style: "currency",
+                        currency: "BRL",
+                      }).format(totalAccountBalance)}
+                    </span>
+                  </div>
+                </div>
+                {/* Botão para adicionar nova conta */}
+                {!showAddAccountDialog && (
+                  <Button onClick={() => setShowAddAccountDialog(true)} className="w-full mt-4">
+                    <Plus className="w-4 h-4 mr-2" />
+                    Adicionar Nova Conta
+                  </Button>
+                )}
+                {showAddAccountDialog && (
+                  <div className="border rounded-lg p-4 space-y-4 mt-4">
+                    <h4 className="font-medium">Nova conta:</h4>
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <div>
+                        <label className="block mb-1 font-medium">Nome da conta</label>
+                        <Input
+                          value={newAccount.name}
+                          onChange={e => setNewAccount(prev => ({ ...prev, name: e.target.value }))}
+                          placeholder="Ex: Conta Principal"
+                          autoFocus
+                        />
+                      </div>
+                      <div>
+                        <label className="block mb-1 font-medium">Banco</label>
+                        <Select 
+                          value={newAccount.bank} 
+                          onValueChange={(value) => setNewAccount(prev => ({ ...prev, bank: value }))}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Selecione o banco" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {creditCards.map(bank => (
+                              <SelectItem key={bank.id} value={bank.id}>
+                                {bank.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <div>
+                        <label className="block mb-1 font-medium">Tipo de conta</label>
+                        <Select 
+                          value={newAccount.account_type} 
+                          onValueChange={(value) => setNewAccount(prev => ({ ...prev, account_type: value as 'checking' | 'savings' }))}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Selecione o tipo" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="checking">Conta Corrente</SelectItem>
+                            <SelectItem value="savings">Poupança</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div>
+                        <label className="block mb-1 font-medium">Saldo atual (R$)</label>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          value={newAccount.balance}
+                          onChange={e => setNewAccount(prev => ({ ...prev, balance: Number(e.target.value) }))}
+                          placeholder="0,00"
+                        />
+                      </div>
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      A data do saldo será registrada como hoje: {formatDateFriendly(new Date())}
+                    </div>
+                    <div className="flex gap-2">
+                      <Button onClick={handleAddAccountDialog} className="flex-1" disabled={savingEdit}>
+                        <Plus className="w-4 h-4 mr-2" />
+                        {savingEdit ? 'Salvando...' : 'Adicionar Conta'}
+                      </Button>
+                      <Button 
+                        variant="outline" 
+                        onClick={() => setShowAddAccountDialog(false)}
+                        disabled={savingEdit}
+                      >
+                        Cancelar
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+        {/* Dialog para alterar data de projeção */}
+        <Dialog open={openKpiDialog === "projected"} onOpenChange={v => setOpenKpiDialog(v ? "projected" : null)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Saldo Projetado</DialogTitle>
+            </DialogHeader>
+            <div className="mb-2 text-sm text-muted-foreground">
+              Projete seu saldo final somando todas as entradas e saídas previstas até a data escolhida.
+            </div>
+            <div className="flex items-center gap-2 mb-4">
+              <label className="font-medium">Data de projeção:</label>
+              <Input type="date" value={projectionDate} onChange={e => setProjectionDate(e.target.value)} />
+            </div>
+            <div className="font-bold text-lg mb-2">
+              {new Intl.NumberFormat("pt-BR", {
+                style: "currency",
+                currency: "BRL",
+              }).format(projectedBalance)}
+            </div>
+            <div className="text-sm text-muted-foreground">
+              Saldo das contas + entradas previstas - saídas previstas até {formatDateFriendly(projectionDate)}
+            </div>
+          </DialogContent>
+        </Dialog>
 
         {/* Timeline de eventos */}
         <Card>
@@ -1192,16 +1595,7 @@ export default function EventsPage() {
                   <div key={event.id + event.dateStr}>
                     <div className="px-4 py-3 bg-muted/30 border-b">
                       <div className="flex items-center justify-between">
-                        <h3 className="font-semibold text-foreground">
-                          {event.dateObj.toLocaleDateString("pt-BR", {
-                            weekday: "short",
-                            day: "2-digit",
-                            month: "2-digit",
-                          })}
-                        </h3>
-                        <span className="text-sm text-muted-foreground">
-                          {event.dateObj.toLocaleDateString("pt-BR")}
-                        </span>
+                        <h3 className="font-semibold text-foreground">{formatTimelineDate(event.dateObj || '')}</h3>
                       </div>
                     </div>
                     <div className="p-4">
@@ -1286,7 +1680,7 @@ export default function EventsPage() {
                 </div>
               ) : null}
               {/* Formulário de edição */}
-              <form className="space-y-4" onSubmit={e => { e.preventDefault(); handleSaveEdit({ description: editDescription, amount: editAmount }); }}>
+              <form className="space-y-4" onSubmit={e => { e.preventDefault(); handleSaveEditTransaction({ description: editDescription, amount: editAmount }); }}>
                 <div>
                   <label className="block mb-1 font-medium">Descrição</label>
                   <Input

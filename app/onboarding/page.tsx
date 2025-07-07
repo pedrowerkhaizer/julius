@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -17,9 +17,36 @@ import {
   Calendar, 
   Shield,
   CheckCircle,
-  Info
+  Info,
+  Plus,
+  Trash2,
+  Building2
 } from 'lucide-react';
 import { toast } from 'sonner';
+import {
+  createBankAccount,
+  deleteBankAccount,
+  getUserBankAccounts,
+  validateAccountData,
+  AVAILABLE_BANKS,
+  getBankName,
+  getAccountTypeName,
+  BankAccount,
+  CreateAccountData
+} from '@/lib/bankAccounts';
+
+function formatDateFriendly(date: string | Date): string {
+  const d = typeof date === 'string' ? new Date(date) : date;
+  const now = new Date();
+  const day = d.getDate().toString().padStart(2, '0');
+  const month = d.toLocaleString('pt-BR', { month: 'short' });
+  const year = d.getFullYear();
+  if (year === now.getFullYear()) {
+    return `${day} ${month}`;
+  } else {
+    return `${day} ${month} ${year}`;
+  }
+}
 
 const STEPS = [
   {
@@ -34,6 +61,11 @@ const STEPS = [
   },
   {
     id: 3,
+    title: 'Contas Bancárias',
+    description: 'Configure suas contas e saldos atuais'
+  },
+  {
+    id: 4,
     title: 'Conexão Bancária',
     description: 'Conecte seus bancos via Open Finance'
   }
@@ -48,6 +80,39 @@ export default function OnboardingPage() {
     consentGiven: false
   });
 
+  // Estados para contas bancárias
+  const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
+  const [accountsLoading, setAccountsLoading] = useState(true);
+  const [accountsError, setAccountsError] = useState<string | null>(null);
+  const [newAccount, setNewAccount] = useState<Partial<CreateAccountData & { balance_date?: string }>>({
+    name: '',
+    bank: '',
+    account_type: 'checking',
+    balance: 0,
+    balance_date: new Date().toISOString().split('T')[0]
+  });
+  const [showAddAccount, setShowAddAccount] = useState(false);
+  const [savingAccount, setSavingAccount] = useState(false);
+
+  // Carregar contas do Supabase ao abrir o passo 3
+  useEffect(() => {
+    if (currentStep === 3) {
+      async function loadAccounts() {
+        setAccountsLoading(true);
+        setAccountsError(null);
+        try {
+          const accounts = await getUserBankAccounts();
+          setBankAccounts(accounts);
+        } catch (err: any) {
+          setAccountsError(err.message || 'Erro ao carregar contas bancárias');
+        } finally {
+          setAccountsLoading(false);
+        }
+      }
+      loadAccounts();
+    }
+  }, [currentStep]);
+
   const handleNext = () => {
     if (currentStep < STEPS.length) {
       setCurrentStep(prev => prev + 1);
@@ -60,24 +125,6 @@ export default function OnboardingPage() {
     }
   };
 
-  const handleFinish = () => {
-    if (!formData.paymentDay || !formData.cardDueDay) {
-      toast.error('Preencha todos os campos obrigatórios');
-      return;
-    }
-
-    // Simulate saving onboarding data
-    localStorage.setItem('julius_onboarding', JSON.stringify({
-      completed: true,
-      paymentDay: formData.paymentDay,
-      cardDueDay: formData.cardDueDay,
-      completedAt: new Date().toISOString()
-    }));
-
-    toast.success('Configuração inicial concluída!');
-    router.push('/home');
-  };
-
   const handlePluggyConnect = () => {
     // Simulate Pluggy connection
     toast.info('Abrindo conexão segura com seu banco...');
@@ -86,6 +133,67 @@ export default function OnboardingPage() {
       setFormData(prev => ({ ...prev, consentGiven: true }));
       toast.success('Conexão estabelecida com sucesso!');
     }, 2000);
+  };
+
+  // Adicionar nova conta (Supabase)
+  const handleAddAccount = async (addAnother = false) => {
+    const errors = validateAccountData({
+      name: newAccount.name || '',
+      bank: newAccount.bank || '',
+      account_type: (newAccount.account_type as 'checking' | 'savings') || 'checking',
+      balance: Number(newAccount.balance) || 0
+    });
+    if (errors.length > 0) {
+      toast.error(errors[0]);
+      return;
+    }
+    setSavingAccount(true);
+    try {
+      const created = await createBankAccount({
+        name: newAccount.name!,
+        bank: newAccount.bank!,
+        account_type: newAccount.account_type as 'checking' | 'savings',
+        balance: Number(newAccount.balance),
+        balance_date: newAccount.balance_date || new Date().toISOString().split('T')[0]
+      });
+      setBankAccounts(prev => [...prev, created]);
+      setNewAccount({ name: '', bank: '', account_type: 'checking', balance: 0 });
+      toast.success('Conta adicionada com sucesso!');
+      if (!addAnother) setShowAddAccount(false);
+    } catch (err: any) {
+      toast.error(err.message || 'Erro ao adicionar conta');
+    } finally {
+      setSavingAccount(false);
+    }
+  };
+
+  // Remover conta (Supabase)
+  const handleRemoveAccount = async (id: string) => {
+    setSavingAccount(true);
+    try {
+      await deleteBankAccount(id);
+      setBankAccounts(prev => prev.filter(account => account.id !== id));
+      toast.success('Conta removida com sucesso!');
+    } catch (err: any) {
+      toast.error(err.message || 'Erro ao remover conta');
+    } finally {
+      setSavingAccount(false);
+    }
+  };
+
+  // Finalizar onboarding: apenas salva config inicial (dias) e navega
+  const handleFinish = () => {
+    if (!formData.paymentDay || !formData.cardDueDay) {
+      toast.error('Preencha todos os campos obrigatórios');
+      return;
+    }
+    if (bankAccounts.length === 0) {
+      toast.error('Adicione pelo menos uma conta bancária');
+      return;
+    }
+    // Aqui pode chamar saveOnboardingConfig se desejar salvar dias no Supabase
+    toast.success('Configuração inicial concluída!');
+    router.push('/home');
   };
 
   const progress = (currentStep / STEPS.length) * 100;
@@ -125,7 +233,8 @@ export default function OnboardingPage() {
             <CardTitle className="flex items-center gap-2">
               {currentStep === 1 && <Info className="w-5 h-5 text-indigo-500" />}
               {currentStep === 2 && <Calendar className="w-5 h-5 text-indigo-500" />}
-              {currentStep === 3 && <Shield className="w-5 h-5 text-indigo-500" />}
+              {currentStep === 3 && <Building2 className="w-5 h-5 text-indigo-500" />}
+              {currentStep === 4 && <Shield className="w-5 h-5 text-indigo-500" />}
               {STEPS[currentStep - 1].title}
             </CardTitle>
             <p className="text-muted-foreground">
@@ -234,8 +343,194 @@ export default function OnboardingPage() {
               </div>
             )}
 
-            {/* Step 3: Bank Connection */}
+            {/* Step 3: Bank Accounts Configuration */}
             {currentStep === 3 && (
+              <div className="space-y-6">
+                <div className="text-center py-4">
+                  <Building2 className="w-12 h-12 text-indigo-500 mx-auto mb-3" />
+                  <h3 className="text-lg font-semibold mb-2">
+                    Configure suas contas bancárias
+                  </h3>
+                  <p className="text-muted-foreground">
+                    Adicione suas contas correntes e poupanças com os saldos atuais
+                  </p>
+                </div>
+
+                {/* Lista de contas existentes */}
+                {accountsLoading ? (
+                  <div className="text-center py-8">
+                    <p>Carregando suas contas bancárias...</p>
+                  </div>
+                ) : accountsError ? (
+                  <div className="text-center py-8 text-red-500">
+                    <p>{accountsError}</p>
+                    <Button onClick={() => setAccountsError(null)} className="mt-4">
+                      Tentar novamente
+                    </Button>
+                  </div>
+                ) : bankAccounts.length > 0 ? (
+                  <div className="space-y-3">
+                    <h4 className="font-medium">Suas contas:</h4>
+                    {bankAccounts.map(account => (
+                      <div key={account.id} className="flex items-center justify-between p-3 border rounded-lg">
+                        <div className="flex-1">
+                          <div className="font-medium">{account.name}</div>
+                          <div className="text-sm text-muted-foreground">
+                            {getBankName(account.bank)} • 
+                            {getAccountTypeName(account.account_type)}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            Saldo em: {formatDateFriendly(account.balance_date || '')}
+                          </div>
+                        </div>
+                        <div className="text-right mr-3">
+                          <div className="font-semibold">
+                            {new Intl.NumberFormat("pt-BR", {
+                              style: "currency",
+                              currency: "BRL",
+                            }).format(account.balance)}
+                          </div>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleRemoveAccount(account.id)}
+                          className="text-red-500 hover:text-red-700"
+                          disabled={savingAccount}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-8">
+                    <p>Você ainda não adicionou nenhuma conta bancária.</p>
+                    <Button 
+                      onClick={() => setShowAddAccount(true)}
+                      variant="outline"
+                      className="mt-4"
+                    >
+                      <Plus className="w-4 h-4 mr-2" />
+                      Adicionar Nova Conta
+                    </Button>
+                  </div>
+                )}
+
+                {/* Formulário para adicionar nova conta */}
+                {showAddAccount ? (
+                  <div className="p-4 border rounded-lg space-y-4">
+                    <h4 className="font-medium">Nova conta:</h4>
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <div>
+                        <Label htmlFor="accountName">Nome da conta</Label>
+                        <Input
+                          id="accountName"
+                          value={newAccount.name}
+                          onChange={e => setNewAccount(prev => ({ ...prev, name: e.target.value }))}
+                          placeholder="Ex: Conta Principal"
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="accountBank">Banco</Label>
+                        <Select 
+                          value={newAccount.bank} 
+                          onValueChange={(value) => setNewAccount(prev => ({ ...prev, bank: value }))}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Selecione o banco" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {AVAILABLE_BANKS.map(bank => (
+                              <SelectItem key={bank.id} value={bank.id}>
+                                {bank.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <div>
+                        <Label htmlFor="accountType">Tipo de conta</Label>
+                        <Select 
+                          value={newAccount.account_type} 
+                          onValueChange={(value) => setNewAccount(prev => ({ ...prev, account_type: value as 'checking' | 'savings' }))}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Selecione o tipo" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="checking">Conta Corrente</SelectItem>
+                            <SelectItem value="savings">Poupança</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div>
+                        <Label htmlFor="accountBalance">Saldo atual (R$)</Label>
+                        <Input
+                          id="accountBalance"
+                          type="number"
+                          step="0.01"
+                          value={newAccount.balance}
+                          onChange={e => setNewAccount(prev => ({ ...prev, balance: Number(e.target.value) }))}
+                          placeholder="0,00"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <Label>Data do saldo</Label>
+                      <Input
+                        type="date"
+                        value={newAccount.balance_date}
+                        onChange={e => setNewAccount(prev => ({ ...prev, balance_date: e.target.value }))}
+                        max={new Date().toISOString().split('T')[0]}
+                      />
+                    </div>
+                    <div className="flex gap-2">
+                      <Button onClick={() => handleAddAccount(false)} className="flex-1" disabled={savingAccount}>
+                        <Plus className="w-4 h-4 mr-2" />
+                        {savingAccount ? 'Salvando...' : 'Adicionar Conta'}
+                      </Button>
+                      <Button onClick={() => handleAddAccount(true)} variant="secondary" disabled={savingAccount}>
+                        <Plus className="w-4 h-4 mr-2" />
+                        Adicionar outra
+                      </Button>
+                      <Button 
+                        variant="outline" 
+                        onClick={() => setShowAddAccount(false)}
+                        disabled={savingAccount}
+                      >
+                        Cancelar
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <Button 
+                    onClick={() => setShowAddAccount(true)}
+                    variant="outline"
+                    className="w-full"
+                  >
+                    <Plus className="w-4 h-4 mr-2" />
+                    Adicionar Nova Conta
+                  </Button>
+                )}
+
+                <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                  <h4 className="font-semibold text-blue-800 mb-2">
+                    💡 Por que precisamos do saldo atual?
+                  </h4>
+                  <p className="text-sm text-blue-700">
+                    O saldo atual é fundamental para calcular seus limites diários 
+                    e projetar quando você pode fazer gastos. Sem essa informação, 
+                    não conseguimos te dar uma visão precisa do seu controle financeiro.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Step 4: Bank Connection */}
+            {currentStep === 4 && (
               <div className="space-y-6">
                 <div className="text-center py-8">
                   <Shield className="w-16 h-16 text-indigo-500 mx-auto mb-4" />

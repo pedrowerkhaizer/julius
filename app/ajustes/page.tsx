@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -8,8 +8,21 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { toast } from "sonner";
-import { User2, MessageCircle, Calendar, BarChart2, Bell, ArrowLeft, Upload, Trash2 } from "lucide-react";
+import { User2, MessageCircle, Calendar, BarChart2, Bell, ArrowLeft, Upload, Trash2, Plus, Building2, Pencil } from "lucide-react";
 import { useRouter } from "next/navigation";
+import {
+  getUserBankAccounts,
+  createBankAccount,
+  updateBankAccount,
+  deleteBankAccount,
+  validateAccountData,
+  AVAILABLE_BANKS,
+  getBankName,
+  getAccountTypeName,
+  BankAccount,
+  CreateAccountData,
+  UpdateAccountData
+} from "@/lib/bankAccounts";
 
 const notificationTypes = [
   {
@@ -80,6 +93,19 @@ interface NotificacaoConfig {
 const notificationKeys = ["weekly_summary", "monthly_projection", "alerts"] as const;
 type NotificationKey = typeof notificationKeys[number];
 
+function formatDateFriendly(date: string | Date): string {
+  const d = typeof date === 'string' ? new Date(date) : date;
+  const now = new Date();
+  const day = d.getDate().toString().padStart(2, '0');
+  const month = d.toLocaleString('pt-BR', { month: 'short' });
+  const year = d.getFullYear();
+  if (year === now.getFullYear()) {
+    return `${day} ${month}`;
+  } else {
+    return `${day} ${month} ${year}`;
+  }
+}
+
 export default function AjustesPage() {
   // Perfil
   const [nome, setNome] = useState("");
@@ -95,6 +121,38 @@ export default function AjustesPage() {
   });
   const [saving, setSaving] = useState(false);
   const router = useRouter();
+
+  // Estados para contas bancárias
+  const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
+  const [accountsLoading, setAccountsLoading] = useState(true);
+  const [accountsError, setAccountsError] = useState<string | null>(null);
+  const [newAccount, setNewAccount] = useState<Partial<CreateAccountData & { balance_date?: string }>>({
+    name: '',
+    bank: '',
+    account_type: 'checking',
+    balance: 0,
+    balance_date: new Date().toISOString().split('T')[0]
+  });
+  const [showAddAccount, setShowAddAccount] = useState(false);
+  const [editingAccount, setEditingAccount] = useState<BankAccount | null>(null);
+  const [savingAccount, setSavingAccount] = useState(false);
+
+  // Carregar contas do Supabase ao abrir a tela
+  useEffect(() => {
+    async function loadAccounts() {
+      setAccountsLoading(true);
+      setAccountsError(null);
+      try {
+        const accounts = await getUserBankAccounts();
+        setBankAccounts(accounts);
+      } catch (err: any) {
+        setAccountsError(err.message || 'Erro ao carregar contas bancárias');
+      } finally {
+        setAccountsLoading(false);
+      }
+    }
+    loadAccounts();
+  }, []);
 
   function handleSave(e: React.FormEvent) {
     e.preventDefault();
@@ -138,6 +196,92 @@ export default function AjustesPage() {
     setAvatarPreview("");
     setAvatarUrl("");
   }
+
+  // Adicionar nova conta
+  const handleAddAccount = async () => {
+    const errors = validateAccountData({
+      name: newAccount.name || '',
+      bank: newAccount.bank || '',
+      account_type: (newAccount.account_type as 'checking' | 'savings') || 'checking',
+      balance: Number(newAccount.balance) || 0
+    });
+    if (errors.length > 0) {
+      toast.error(errors[0]);
+      return;
+    }
+    setSavingAccount(true);
+    try {
+      const created = await createBankAccount({
+        name: newAccount.name!,
+        bank: newAccount.bank!,
+        account_type: newAccount.account_type as 'checking' | 'savings',
+        balance: Number(newAccount.balance),
+        balance_date: newAccount.balance_date || new Date().toISOString().split('T')[0]
+      });
+      setBankAccounts(prev => [...prev, created]);
+      setNewAccount({ name: '', bank: '', account_type: 'checking', balance: 0 });
+      setShowAddAccount(false);
+      toast.success('Conta adicionada com sucesso!');
+    } catch (err: any) {
+      toast.error(err.message || 'Erro ao adicionar conta');
+    } finally {
+      setSavingAccount(false);
+    }
+  };
+
+  // Remover conta
+  const handleRemoveAccount = async (id: string) => {
+    setSavingAccount(true);
+    try {
+      await deleteBankAccount(id);
+      setBankAccounts(prev => prev.filter(account => account.id !== id));
+      toast.success('Conta removida com sucesso!');
+    } catch (err: any) {
+      toast.error(err.message || 'Erro ao remover conta');
+    } finally {
+      setSavingAccount(false);
+    }
+  };
+
+  // Editar conta
+  const handleEditAccount = (account: BankAccount) => {
+    setEditingAccount(account);
+  };
+
+  // Salvar edição
+  const handleSaveAccountEdit = async (updatedAccount: BankAccount) => {
+    const errors = validateAccountData({
+      name: updatedAccount.name,
+      bank: updatedAccount.bank,
+      account_type: updatedAccount.account_type,
+      balance: Number(updatedAccount.balance)
+    });
+    if (errors.length > 0) {
+      toast.error(errors[0]);
+      return;
+    }
+    setSavingAccount(true);
+    try {
+      const updated = await updateBankAccount(updatedAccount.id, {
+        name: updatedAccount.name,
+        bank: updatedAccount.bank,
+        account_type: updatedAccount.account_type,
+        balance: Number(updatedAccount.balance),
+        balance_date: updatedAccount.balance_date
+      });
+      setBankAccounts(prev => prev.map(account => account.id === updated.id ? updated : account));
+      setEditingAccount(null);
+      toast.success('Conta atualizada com sucesso!');
+    } catch (err: any) {
+      toast.error(err.message || 'Erro ao atualizar conta');
+    } finally {
+      setSavingAccount(false);
+    }
+  };
+
+  const handleCancelAccountEdit = () => {
+    setEditingAccount(null);
+  };
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center py-8">
@@ -276,6 +420,249 @@ export default function AjustesPage() {
                     </div>
                   );
                 })}
+              </div>
+            </div>
+
+            {/* Contas Bancárias */}
+            <div>
+              <h3 className="font-semibold mb-3 text-lg flex items-center gap-2">
+                <Building2 className="w-5 h-5 text-blue-600" />
+                Contas Bancárias
+              </h3>
+              <div className="space-y-4">
+                {/* Lista de contas existentes */}
+                {accountsLoading ? (
+                  <div className="text-center py-8">
+                    <p>Carregando contas bancárias...</p>
+                  </div>
+                ) : accountsError ? (
+                  <div className="text-center py-8 text-red-500">
+                    <p>{accountsError}</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {bankAccounts.map(account => (
+                      <div key={account.id} className="border rounded-lg p-4">
+                        {editingAccount?.id === account.id ? (
+                          <div className="space-y-3">
+                            <div className="grid gap-3 sm:grid-cols-2">
+                              <div>
+                                <Label>Nome da conta</Label>
+                                <Input
+                                  value={editingAccount.name}
+                                  onChange={e => setEditingAccount(prev => prev ? {...prev, name: e.target.value} : null)}
+                                />
+                              </div>
+                              <div>
+                                <Label>Banco</Label>
+                                <Select 
+                                  value={editingAccount.bank} 
+                                  onValueChange={(value) => setEditingAccount(prev => prev ? {...prev, bank: value} : null)}
+                                >
+                                  <SelectTrigger>
+                                    <SelectValue placeholder="Selecione o banco" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {AVAILABLE_BANKS.map(bank => (
+                                      <SelectItem key={bank.id} value={bank.id}>
+                                        {bank.name}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            </div>
+                            <div className="grid gap-3 sm:grid-cols-2">
+                              <div>
+                                <Label>Tipo de conta</Label>
+                                <Select 
+                                  value={editingAccount.account_type} 
+                                  onValueChange={(value) => setEditingAccount(prev => prev ? {...prev, account_type: value as 'checking' | 'savings'} : null)}
+                                >
+                                  <SelectTrigger>
+                                    <SelectValue placeholder="Selecione o tipo" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="checking">Conta Corrente</SelectItem>
+                                    <SelectItem value="savings">Poupança</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div>
+                                <Label>Saldo atual (R$)</Label>
+                                <Input
+                                  type="number"
+                                  step="0.01"
+                                  value={editingAccount.balance}
+                                  onChange={e => setEditingAccount(prev => prev ? {...prev, balance: Number(e.target.value)} : null)}
+                                />
+                              </div>
+                            </div>
+                            <div className="grid gap-3 sm:grid-cols-2">
+                              <div>
+                                <Label>Data do saldo</Label>
+                                <Input
+                                  type="date"
+                                  value={editingAccount.balance_date}
+                                  onChange={e => setEditingAccount(prev => prev ? { ...prev, balance_date: e.target.value } : null)}
+                                  max={new Date().toISOString().split('T')[0]}
+                                />
+                              </div>
+                            </div>
+                            <div className="flex gap-2">
+                              <Button onClick={() => handleSaveAccountEdit(editingAccount)} className="flex-1" disabled={savingAccount}>
+                                {savingAccount ? "Salvando..." : "Salvar"}
+                              </Button>
+                              <Button variant="outline" onClick={handleCancelAccountEdit} disabled={savingAccount}>
+                                Cancelar
+                              </Button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-between">
+                            <div className="flex-1">
+                              <div className="font-medium">{account.name}</div>
+                              <div className="text-sm text-muted-foreground">
+                                {getBankName(account.bank)} • 
+                                {getAccountTypeName(account.account_type)}
+                              </div>
+                            </div>
+                            <div className="text-right mr-3">
+                              <div className="font-semibold">
+                                {new Intl.NumberFormat("pt-BR", {
+                                  style: "currency",
+                                  currency: "BRL",
+                                }).format(account.balance)}
+                              </div>
+                            </div>
+                            <div className="text-xs text-muted-foreground">
+                              Saldo em: {formatDateFriendly(account.balance_date || '')}
+                            </div>
+                            <div className="flex gap-1">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleEditAccount(account)}
+                              >
+                                <Pencil className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleRemoveAccount(account.id)}
+                                className="text-red-500 hover:text-red-700"
+                                disabled={savingAccount}
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                    {/* Botão para adicionar nova conta */}
+                    {!showAddAccount && (
+                      <Button
+                        onClick={() => setShowAddAccount(true)}
+                        variant="outline"
+                        className="mt-4"
+                      >
+                        <Plus className="w-4 h-4 mr-2" />
+                        Adicionar Nova Conta
+                      </Button>
+                    )}
+                    {/* Formulário para adicionar nova conta */}
+                    {showAddAccount && (
+                      <div className="border rounded-lg p-4 space-y-4 mt-4">
+                        <h4 className="font-medium">Nova conta:</h4>
+                        <div className="grid gap-4 sm:grid-cols-2">
+                          <div>
+                            <Label>Nome da conta</Label>
+                            <Input
+                              value={newAccount.name}
+                              onChange={e => setNewAccount(prev => ({ ...prev, name: e.target.value }))}
+                              placeholder="Ex: Conta Principal"
+                            />
+                          </div>
+                          <div>
+                            <Label>Banco</Label>
+                            <Select 
+                              value={newAccount.bank} 
+                              onValueChange={(value) => setNewAccount(prev => ({ ...prev, bank: value }))}
+                            >
+                              <SelectTrigger>
+                                <SelectValue placeholder="Selecione o banco" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {AVAILABLE_BANKS.map(bank => (
+                                  <SelectItem key={bank.id} value={bank.id}>
+                                    {bank.name}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
+                        <div className="grid gap-4 sm:grid-cols-2">
+                          <div>
+                            <Label>Tipo de conta</Label>
+                            <Select 
+                              value={newAccount.account_type} 
+                              onValueChange={(value) => setNewAccount(prev => ({ ...prev, account_type: value as 'checking' | 'savings' }))}
+                            >
+                              <SelectTrigger>
+                                <SelectValue placeholder="Selecione o tipo" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="checking">Conta Corrente</SelectItem>
+                                <SelectItem value="savings">Poupança</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div>
+                            <Label>Saldo atual (R$)</Label>
+                            <Input
+                              type="number"
+                              step="0.01"
+                              value={newAccount.balance}
+                              onChange={e => setNewAccount(prev => ({ ...prev, balance: Number(e.target.value) }))}
+                              placeholder="0,00"
+                            />
+                          </div>
+                        </div>
+                        <div>
+                          <Label>Data do saldo</Label>
+                          <Input
+                            type="date"
+                            value={newAccount.balance_date}
+                            onChange={e => setNewAccount(prev => ({ ...prev, balance_date: e.target.value }))}
+                            max={new Date().toISOString().split('T')[0]}
+                          />
+                        </div>
+                        <div className="flex gap-2">
+                          <Button onClick={handleAddAccount} className="flex-1" disabled={savingAccount}>
+                            <Plus className="w-4 h-4 mr-2" />
+                            {savingAccount ? 'Salvando...' : 'Adicionar Conta'}
+                          </Button>
+                          <Button 
+                            variant="outline" 
+                            onClick={() => setShowAddAccount(false)}
+                            disabled={savingAccount}
+                          >
+                            Cancelar
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                  <p className="text-sm text-blue-700">
+                    💡 <strong>Dica:</strong> Mantenha seus saldos atualizados para ter uma visão precisa 
+                    do seu controle financeiro. Você pode ajustar os valores sempre que necessário.
+                  </p>
+                </div>
               </div>
             </div>
             <div className="flex justify-end">

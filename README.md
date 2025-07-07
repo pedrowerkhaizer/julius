@@ -1,6 +1,6 @@
 # Julius - Seu Assistente Financeiro
 
-Julius é um assistente financeiro pessoal que conecta suas contas bancárias via Open Finance (Pluggy), centralizando informações de saldo, transações, limites e projeções financeiras em uma interface moderna, responsiva e fácil de usar.
+Um aplicativo web para controle financeiro pessoal com foco em limites diários e projeções mensais.
 
 ## Objetivo
 
@@ -10,82 +10,219 @@ Julius é um assistente financeiro pessoal que conecta suas contas bancárias vi
 
 ## Funcionalidades
 
-- **Conexão bancária segura** via Pluggy/Open Finance.
-- **Dashboard com timeline de eventos**: transações passadas, projeções futuras, agrupamento por data.
-- **Resumo financeiro**: saldo atual, gastos do dia, limite diário/restante.
-- **Limites por categoria e método de pagamento**: defina quanto pode gastar em cada área.
-- **Transações recorrentes**: cadastre salários, contas fixas e receitas/despesas automáticas.
-- **Filtros de período**: visualize eventos por semana, mês, período personalizado, etc.
-- **Interface responsiva**: experiência fluida em desktop e mobile.
-- **Notificações e feedbacks visuais** para ações importantes.
+### ✅ Implementadas
+- **Autenticação**: Login e cadastro com Supabase
+- **Timeline de Eventos**: Cadastro de entradas e saídas recorrentes e únicas
+- **Tipos de Despesa**: Fixas, variáveis e assinaturas
+- **KPIs**: Visualização de entradas, saídas, performance e saldo das contas
+- **Notificações**: Configuração de notificações WhatsApp
+- **Onboarding**: Configuração inicial com contas bancárias
+- **Ajustes**: Gerenciamento de perfil e contas bancárias
 
-## Tecnologias
-
-- **Next.js 13+** (App Router)
-- **React 18**
-- **TypeScript**
-- **Tailwind CSS** + shadcn/ui
-- **Pluggy SDK** (backend)
-- **react-pluggy-connect** (frontend)
-- **Express.js** (backend separado para integração segura com Pluggy)
+### 🔄 Em Desenvolvimento
+- **Conexão Bancária**: Integração com Open Finance via Pluggy
+- **Limites Diários**: Cálculo automático de limites baseado no saldo
+- **Sincronização**: Atualização automática de transações
 
 ## Estrutura do Projeto
 
 ```
-bolt-julius/           # Frontend Next.js
-bolt-backend/          # Backend Express/Node.js (Pluggy)
+bolt-julius/
+├── app/                    # Páginas Next.js
+│   ├── ajustes/           # Configurações do usuário
+│   ├── auth/              # Autenticação
+│   ├── home/              # Dashboard principal
+│   ├── login/             # Página de login
+│   ├── onboarding/        # Configuração inicial
+│   └── signup/            # Página de cadastro
+├── components/            # Componentes React
+│   ├── ui/               # Componentes base (shadcn/ui)
+│   └── providers/        # Providers (theme, etc.)
+├── lib/                  # Utilitários e configurações
+└── hooks/                # Hooks customizados
 ```
 
-## Como funciona o fluxo Pluggy
+## Sistema de Contas Bancárias
 
-1. O usuário clica em "Conectar banco" e autentica via Pluggy Connect.
-2. O backend gera um `connectToken` e retorna ao frontend.
-3. Após a conexão, o Pluggy retorna um `itemId` (identificador da conexão bancária).
-4. O frontend salva o `itemId` e passa a buscar dados reais do backend:
-    - Saldo atual
-    - Transações
-    - Faturas futuras
-5. O backend consulta a API Pluggy e retorna os dados para o frontend.
-6. A interface exibe tudo em tempo real, agrupando, filtrando e projetando eventos.
+### Como Funciona
 
-## Como rodar o projeto
+O sistema de contas bancárias permite que os usuários:
 
-### 1. Clone o repositório
+1. **Configurem contas no onboarding**: Adicionem contas correntes e poupanças com saldos iniciais
+2. **Ajustem saldos posteriormente**: Atualizem valores na página de ajustes
+3. **Visualizem saldo total**: Vejam o saldo consolidado no dashboard
 
-```bash
-git clone https://github.com/pedrowerkhaizer/julius.git
-cd julius/bolt-julius
+### Estrutura de Dados
+
+```typescript
+interface BankAccount {
+  id: string;
+  name: string;           // Nome da conta (ex: "Conta Principal")
+  bank: string;           // ID do banco (ex: "nubank", "itau")
+  accountType: 'checking' | 'savings';  // Tipo de conta
+  balance: number;        // Saldo atual
+}
 ```
 
-### 2. Instale as dependências do frontend
+### Implementação no Banco de Dados
 
-```bash
-npm install
+Para implementar a persistência no Supabase, crie a seguinte tabela:
+
+```sql
+-- Tabela para contas bancárias
+CREATE TABLE bank_accounts (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  bank TEXT NOT NULL,
+  account_type TEXT NOT NULL CHECK (account_type IN ('checking', 'savings')),
+  balance DECIMAL(10,2) NOT NULL DEFAULT 0,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Índices para performance
+CREATE INDEX idx_bank_accounts_user_id ON bank_accounts(user_id);
+CREATE INDEX idx_bank_accounts_created_at ON bank_accounts(created_at);
+
+-- RLS (Row Level Security)
+ALTER TABLE bank_accounts ENABLE ROW LEVEL SECURITY;
+
+-- Política: usuários só podem ver suas próprias contas
+CREATE POLICY "Users can view own bank accounts" ON bank_accounts
+  FOR SELECT USING (auth.uid() = user_id);
+
+-- Política: usuários só podem inserir suas próprias contas
+CREATE POLICY "Users can insert own bank accounts" ON bank_accounts
+  FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+-- Política: usuários só podem atualizar suas próprias contas
+CREATE POLICY "Users can update own bank accounts" ON bank_accounts
+  FOR UPDATE USING (auth.uid() = user_id);
+
+-- Política: usuários só podem deletar suas próprias contas
+CREATE POLICY "Users can delete own bank accounts" ON bank_accounts
+  FOR DELETE USING (auth.uid() = user_id);
 ```
 
-### 3. Configure o backend (em pasta separada)
+### Funções para Integração
 
-- Siga as instruções do backend (Express/Node.js) para instalar dependências, configurar `.env` com suas credenciais Pluggy e rodar o servidor.
-- O backend deve expor endpoints como:
-    - `/pluggy/connect-token` (POST)
-    - `/pluggy/:itemId/accounts` (GET)
-    - `/pluggy/:itemId/transactions` (GET)
-    - `/pluggy/:itemId/invoices` (GET, opcional)
+Substitua as funções que usam localStorage pelas seguintes:
 
-### 4. Rode o frontend
+```typescript
+// Carregar contas do Supabase
+async function fetchBankAccounts() {
+  const { data: userData } = await supabase.auth.getUser();
+  if (!userData?.user?.id) return;
 
-```bash
-npm run dev
+  const { data, error } = await supabase
+    .from('bank_accounts')
+    .select('*')
+    .eq('user_id', userData.user.id)
+    .order('created_at', { ascending: true });
+
+  if (error) {
+    console.error('Erro ao carregar contas:', error);
+    toast.error('Erro ao carregar contas bancárias');
+  } else {
+    setBankAccounts(data || []);
+  }
+}
+
+// Adicionar nova conta
+async function addBankAccount(account: Omit<BankAccount, 'id'>) {
+  const { data: userData } = await supabase.auth.getUser();
+  if (!userData?.user?.id) return;
+
+  const { data, error } = await supabase
+    .from('bank_accounts')
+    .insert([{
+      user_id: userData.user.id,
+      name: account.name,
+      bank: account.bank,
+      account_type: account.accountType,
+      balance: account.balance
+    }])
+    .select();
+
+  if (error) {
+    console.error('Erro ao adicionar conta:', error);
+    toast.error('Erro ao adicionar conta');
+  } else {
+    toast.success('Conta adicionada com sucesso!');
+    await fetchBankAccounts(); // Recarregar lista
+  }
+}
+
+// Atualizar conta
+async function updateBankAccount(id: string, updates: Partial<BankAccount>) {
+  const { error } = await supabase
+    .from('bank_accounts')
+    .update({
+      name: updates.name,
+      bank: updates.bank,
+      account_type: updates.accountType,
+      balance: updates.balance,
+      updated_at: new Date().toISOString()
+    })
+    .eq('id', id);
+
+  if (error) {
+    console.error('Erro ao atualizar conta:', error);
+    toast.error('Erro ao atualizar conta');
+  } else {
+    toast.success('Conta atualizada com sucesso!');
+    await fetchBankAccounts(); // Recarregar lista
+  }
+}
+
+// Remover conta
+async function removeBankAccount(id: string) {
+  const { error } = await supabase
+    .from('bank_accounts')
+    .delete()
+    .eq('id', id);
+
+  if (error) {
+    console.error('Erro ao remover conta:', error);
+    toast.error('Erro ao remover conta');
+  } else {
+    toast.success('Conta removida com sucesso!');
+    await fetchBankAccounts(); // Recarregar lista
+  }
+}
 ```
 
-Acesse [http://localhost:3000](http://localhost:3000)
+## Próximos Passos
 
-### 5. Fluxo de uso
+1. **Implementar persistência**: Substituir localStorage pelas funções do Supabase
+2. **Cálculo de limites**: Implementar lógica para calcular limites diários baseado no saldo
+3. **Integração Pluggy**: Conectar com Open Finance para sincronização automática
+4. **Notificações reais**: Implementar envio de notificações WhatsApp
+5. **Relatórios**: Adicionar relatórios detalhados e gráficos
 
-1. Acesse a tela de bancos e clique em "Conectar banco via Pluggy".
-2. Faça a autenticação no banco desejado.
-3. Após conectar, o sistema salva o `itemId` e carrega os dados reais.
-4. Navegue pelas telas de timeline, limites, recorrentes, etc.
+## Tecnologias
+
+- **Frontend**: Next.js 14, React, TypeScript
+- **UI**: Tailwind CSS, shadcn/ui
+- **Backend**: Supabase (Auth, Database)
+- **Deploy**: Vercel (recomendado)
+
+## Como Executar
+
+1. Clone o repositório
+2. Instale as dependências: `npm install`
+3. Configure as variáveis de ambiente do Supabase
+4. Execute: `npm run dev`
+5. Acesse: `http://localhost:3000`
+
+## Contribuição
+
+1. Fork o projeto
+2. Crie uma branch para sua feature
+3. Commit suas mudanças
+4. Push para a branch
+5. Abra um Pull Request
 
 ## Dicas e Observações
 
