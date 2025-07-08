@@ -360,7 +360,12 @@ export default function OnboardingPage() {
               {Math.round(progress)}% concluído
             </span>
           </div>
-          <Progress value={progress} className="h-2" />
+          <div className="w-full bg-secondary rounded-full h-2">
+            <div 
+              className="bg-primary h-2 rounded-full transition-all" 
+              style={{ width: `${progress}%` }}
+            />
+          </div>
         </div>
 
         {/* Step Content */}

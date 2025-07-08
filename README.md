@@ -1,248 +1,209 @@
-# Julius - Seu Assistente Financeiro
+# Julius - Assistente Financeiro Pessoal
 
-Um aplicativo web para controle financeiro pessoal com foco em limites diários e projeções mensais.
+O Julius é um assistente financeiro pessoal desenvolvido em Next.js com Supabase, focado em proporcionar uma experiência de onboarding guiado, controle de receitas, despesas, contas bancárias e projeções financeiras.
 
-## Objetivo
+## 🚀 Características Principais
 
-- Oferecer uma visão consolidada das suas finanças, com foco em controle de gastos diários, limites por categoria e acompanhamento de transações em tempo real.
-- Automatizar a sincronização de dados bancários, eliminando lançamentos manuais.
-- Ajudar o usuário a tomar decisões melhores com base em dados reais e projeções inteligentes.
+- **Onboarding Obrigatório**: Fluxo guiado em 4 etapas (perfil, receitas, despesas, contas)
+- **Controle Financeiro**: Gestão de entradas, saídas e contas bancárias
+- **Projeções**: Cálculo de saldo projetado baseado em transações futuras
+- **Notificações WhatsApp**: Configuração de alertas e resumos
+- **UX Otimizada**: Skeleton loaders, feedback visual e navegação intuitiva
+- **Responsivo**: Interface adaptada para mobile e desktop
 
-## Funcionalidades
+## 🛠️ Stack Tecnológica
 
-### ✅ Implementadas
-- **Autenticação**: Login e cadastro com Supabase
-- **Timeline de Eventos**: Cadastro de entradas e saídas recorrentes e únicas
-- **Tipos de Despesa**: Fixas, variáveis e assinaturas
-- **KPIs**: Visualização de entradas, saídas, performance e saldo das contas
-- **Notificações**: Configuração de notificações WhatsApp
-- **Onboarding**: Configuração inicial com contas bancárias
-- **Ajustes**: Gerenciamento de perfil e contas bancárias
+- **Frontend**: Next.js 14, React, TypeScript
+- **Backend**: Supabase (Auth, Database, Storage)
+- **Styling**: TailwindCSS, shadcn/ui
+- **Estado**: React Context + Custom Hooks
+- **Notificações**: Sonner (toasts)
+- **Ícones**: Lucide React
 
-### 🔄 Em Desenvolvimento
-- **Conexão Bancária**: Integração com Open Finance via Pluggy
-- **Limites Diários**: Cálculo automático de limites baseado no saldo
-- **Sincronização**: Atualização automática de transações
-
-## Estrutura do Projeto
+## 📁 Estrutura do Projeto
 
 ```
 bolt-julius/
-├── app/                    # Páginas Next.js
+├── app/                    # Páginas Next.js (App Router)
 │   ├── ajustes/           # Configurações do usuário
 │   ├── auth/              # Autenticação
 │   ├── home/              # Dashboard principal
 │   ├── login/             # Página de login
-│   ├── onboarding/        # Configuração inicial
-│   └── signup/            # Página de cadastro
+│   ├── onboarding/        # Fluxo de onboarding
+│   └── signup/            # Cadastro de usuário
 ├── components/            # Componentes React
 │   ├── ui/               # Componentes base (shadcn/ui)
-│   └── providers/        # Providers (theme, etc.)
+│   ├── navigation/       # Componentes de navegação
+│   └── providers/        # Providers de contexto
+├── contexts/             # Contextos React
+│   └── UserContext.tsx   # Contexto global do usuário
+├── hooks/                # Hooks customizados
+│   ├── useUserProfile.ts # Hook para perfil do usuário
+│   ├── useBankAccounts.ts # Hook para contas bancárias
+│   └── useTransactions.ts # Hook para transações
 ├── lib/                  # Utilitários e configurações
-└── hooks/                # Hooks customizados
+│   ├── types/            # Tipos TypeScript
+│   ├── utils/            # Funções utilitárias
+│   ├── supabaseClient.ts # Cliente Supabase
+│   └── bankAccounts.ts   # Funções de contas bancárias
+└── middleware.ts         # Middleware de autenticação
 ```
 
-## Sistema de Contas Bancárias
+## 🔧 Configuração e Instalação
 
-### Como Funciona
+### Pré-requisitos
 
-O sistema de contas bancárias permite que os usuários:
+- Node.js 18+
+- npm ou yarn
+- Conta no Supabase
 
-1. **Configurem contas no onboarding**: Adicionem contas correntes e poupanças com saldos iniciais
-2. **Ajustem saldos posteriormente**: Atualizem valores na página de ajustes
-3. **Visualizem saldo total**: Vejam o saldo consolidado no dashboard
+### 1. Clone o repositório
 
-### Estrutura de Dados
+```bash
+git clone <repository-url>
+cd bolt-julius
+```
+
+### 2. Instale as dependências
+
+```bash
+npm install
+```
+
+### 3. Configure as variáveis de ambiente
+
+Crie um arquivo `.env.local` na raiz do projeto:
+
+```env
+NEXT_PUBLIC_SUPABASE_URL=sua_url_do_supabase
+NEXT_PUBLIC_SUPABASE_ANON_KEY=sua_chave_anonima_do_supabase
+```
+
+### 4. Configure o banco de dados
+
+Execute o script SQL fornecido no arquivo `supabase_migrations.sql` no seu projeto Supabase.
+
+### 5. Execute o projeto
+
+```bash
+npm run dev
+```
+
+Acesse `http://localhost:3000` no seu navegador.
+
+## 📊 Estrutura do Banco de Dados
+
+### Tabelas Principais
+
+- **profiles**: Perfis dos usuários
+- **transactions**: Transações (receitas e despesas)
+- **bank_accounts**: Contas bancárias
+- **recurrence_exceptions**: Exceções de transações recorrentes
+
+### Relacionamentos
+
+- `profiles.user_id` → `auth.users.id`
+- `transactions.user_id` → `auth.users.id`
+- `bank_accounts.user_id` → `auth.users.id`
+- `recurrence_exceptions.transaction_id` → `transactions.id`
+
+## 🎯 Fluxo de Onboarding
+
+1. **Perfil**: Nome e WhatsApp do usuário
+2. **Receitas**: Cadastro de receitas recorrentes
+3. **Despesas**: Cadastro de despesas fixas, variáveis e assinaturas
+4. **Contas**: Configuração de contas bancárias com saldos
+
+## 🔄 Hooks Customizados
+
+### useUserProfile
+Gerencia o perfil do usuário com operações CRUD.
 
 ```typescript
-interface BankAccount {
-  id: string;
-  name: string;           // Nome da conta (ex: "Conta Principal")
-  bank: string;           // ID do banco (ex: "nubank", "itau")
-  accountType: 'checking' | 'savings';  // Tipo de conta
-  balance: number;        // Saldo atual
-}
+const { profile, loading, error, updateProfile } = useUserProfile();
 ```
 
-### Implementação no Banco de Dados
-
-Para implementar a persistência no Supabase, crie a seguinte tabela:
-
-```sql
--- Tabela para contas bancárias
-CREATE TABLE bank_accounts (
-  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
-  name TEXT NOT NULL,
-  bank TEXT NOT NULL,
-  account_type TEXT NOT NULL CHECK (account_type IN ('checking', 'savings')),
-  balance DECIMAL(10,2) NOT NULL DEFAULT 0,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-
--- Índices para performance
-CREATE INDEX idx_bank_accounts_user_id ON bank_accounts(user_id);
-CREATE INDEX idx_bank_accounts_created_at ON bank_accounts(created_at);
-
--- RLS (Row Level Security)
-ALTER TABLE bank_accounts ENABLE ROW LEVEL SECURITY;
-
--- Política: usuários só podem ver suas próprias contas
-CREATE POLICY "Users can view own bank accounts" ON bank_accounts
-  FOR SELECT USING (auth.uid() = user_id);
-
--- Política: usuários só podem inserir suas próprias contas
-CREATE POLICY "Users can insert own bank accounts" ON bank_accounts
-  FOR INSERT WITH CHECK (auth.uid() = user_id);
-
--- Política: usuários só podem atualizar suas próprias contas
-CREATE POLICY "Users can update own bank accounts" ON bank_accounts
-  FOR UPDATE USING (auth.uid() = user_id);
-
--- Política: usuários só podem deletar suas próprias contas
-CREATE POLICY "Users can delete own bank accounts" ON bank_accounts
-  FOR DELETE USING (auth.uid() = user_id);
-```
-
-### Funções para Integração
-
-Substitua as funções que usam localStorage pelas seguintes:
+### useBankAccounts
+Gerencia contas bancárias com operações CRUD.
 
 ```typescript
-// Carregar contas do Supabase
-async function fetchBankAccounts() {
-  const { data: userData } = await supabase.auth.getUser();
-  if (!userData?.user?.id) return;
-
-  const { data, error } = await supabase
-    .from('bank_accounts')
-    .select('*')
-    .eq('user_id', userData.user.id)
-    .order('created_at', { ascending: true });
-
-  if (error) {
-    console.error('Erro ao carregar contas:', error);
-    toast.error('Erro ao carregar contas bancárias');
-  } else {
-    setBankAccounts(data || []);
-  }
-}
-
-// Adicionar nova conta
-async function addBankAccount(account: Omit<BankAccount, 'id'>) {
-  const { data: userData } = await supabase.auth.getUser();
-  if (!userData?.user?.id) return;
-
-  const { data, error } = await supabase
-    .from('bank_accounts')
-    .insert([{
-      user_id: userData.user.id,
-      name: account.name,
-      bank: account.bank,
-      account_type: account.accountType,
-      balance: account.balance
-    }])
-    .select();
-
-  if (error) {
-    console.error('Erro ao adicionar conta:', error);
-    toast.error('Erro ao adicionar conta');
-  } else {
-    toast.success('Conta adicionada com sucesso!');
-    await fetchBankAccounts(); // Recarregar lista
-  }
-}
-
-// Atualizar conta
-async function updateBankAccount(id: string, updates: Partial<BankAccount>) {
-  const { error } = await supabase
-    .from('bank_accounts')
-    .update({
-      name: updates.name,
-      bank: updates.bank,
-      account_type: updates.accountType,
-      balance: updates.balance,
-      updated_at: new Date().toISOString()
-    })
-    .eq('id', id);
-
-  if (error) {
-    console.error('Erro ao atualizar conta:', error);
-    toast.error('Erro ao atualizar conta');
-  } else {
-    toast.success('Conta atualizada com sucesso!');
-    await fetchBankAccounts(); // Recarregar lista
-  }
-}
-
-// Remover conta
-async function removeBankAccount(id: string) {
-  const { error } = await supabase
-    .from('bank_accounts')
-    .delete()
-    .eq('id', id);
-
-  if (error) {
-    console.error('Erro ao remover conta:', error);
-    toast.error('Erro ao remover conta');
-  } else {
-    toast.success('Conta removida com sucesso!');
-    await fetchBankAccounts(); // Recarregar lista
-  }
-}
+const { accounts, loading, error, addAccount, updateAccount, deleteAccount } = useBankAccounts();
 ```
 
-## Próximos Passos
+### useTransactions
+Gerencia transações com operações CRUD.
 
-1. **Implementar persistência**: Substituir localStorage pelas funções do Supabase
-2. **Cálculo de limites**: Implementar lógica para calcular limites diários baseado no saldo
-3. **Integração Pluggy**: Conectar com Open Finance para sincronização automática
-4. **Notificações reais**: Implementar envio de notificações WhatsApp
-5. **Relatórios**: Adicionar relatórios detalhados e gráficos
+```typescript
+const { transactions, loading, error, addTransaction, updateTransaction, deleteTransaction } = useTransactions();
+```
 
-## Tecnologias
+## 🎨 Componentes Reutilizáveis
 
-- **Frontend**: Next.js 14, React, TypeScript
-- **UI**: Tailwind CSS, shadcn/ui
-- **Backend**: Supabase (Auth, Database)
-- **Deploy**: Vercel (recomendado)
+### LoadingSkeleton
+Skeletons específicos para diferentes tipos de conteúdo:
 
-## Como Executar
+```typescript
+<LoadingSkeleton type="kpis" />
+<LoadingSkeleton type="accounts" />
+<LoadingSkeleton type="timeline" />
+```
 
-1. Clone o repositório
-2. Instale as dependências: `npm install`
-3. Configure as variáveis de ambiente do Supabase
-4. Execute: `npm run dev`
-5. Acesse: `http://localhost:3000`
+### TransactionForm
+Formulário reutilizável para cadastro de transações:
 
-## Contribuição
+```typescript
+<TransactionForm 
+  type="income" 
+  transactions={incomes} 
+  onTransactionsChange={setIncomes} 
+/>
+```
+
+## 📱 Responsividade
+
+O projeto é totalmente responsivo com breakpoints:
+- **Mobile**: < 640px
+- **Tablet**: 640px - 1024px
+- **Desktop**: > 1024px
+
+## 🔒 Autenticação e Segurança
+
+- Autenticação via Supabase Auth
+- Middleware para proteção de rotas
+- Row Level Security (RLS) no banco de dados
+- Validação de dados no frontend e backend
+
+## 🚀 Deploy
+
+### Vercel (Recomendado)
+
+1. Conecte seu repositório ao Vercel
+2. Configure as variáveis de ambiente
+3. Deploy automático a cada push
+
+### Outras Plataformas
+
+O projeto pode ser deployado em qualquer plataforma que suporte Next.js:
+- Netlify
+- Railway
+- DigitalOcean App Platform
+
+## 🤝 Contribuição
 
 1. Fork o projeto
-2. Crie uma branch para sua feature
-3. Commit suas mudanças
-4. Push para a branch
+2. Crie uma branch para sua feature (`git checkout -b feature/AmazingFeature`)
+3. Commit suas mudanças (`git commit -m 'Add some AmazingFeature'`)
+4. Push para a branch (`git push origin feature/AmazingFeature`)
 5. Abra um Pull Request
 
-## Dicas e Observações
+## 📝 Licença
 
-- **Nunca exponha suas credenciais Pluggy no frontend!**
-- O backend deve rodar em localhost:3001 por padrão (ajuste se necessário).
-- O sistema é responsivo e pode ser usado normalmente em celulares.
-- Se não houver banco conectado, a interface mostra mensagens amigáveis e orienta o usuário.
-- Os dados de limites e recorrentes são mockados/localmente, mas podem ser integrados ao backend futuramente.
+Este projeto está sob a licença MIT. Veja o arquivo `LICENSE` para mais detalhes.
 
-## Roadmap
+## 🆘 Suporte
 
-- Integração de limites e recorrentes com backend/Pluggy
-- Projeções financeiras automáticas
-- Exportação de relatórios
-- Notificações inteligentes
-
-## Licença
-
-MIT
+Para suporte, abra uma issue no repositório ou entre em contato através do email.
 
 ---
 
-Desenvolvido por [@pedrowerkhaizer](https://github.com/pedrowerkhaizer) 
+**Desenvolvido com ❤️ para facilitar o controle financeiro pessoal** 
