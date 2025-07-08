@@ -83,6 +83,23 @@ export async function middleware(req: NextRequest) {
     return NextResponse.redirect(new URL('/home', req.url));
   }
 
+  // Após autenticação, buscar perfil do usuário e checar onboarding_completed
+  if (session && isProtectedRoute) {
+    // Buscar perfil do usuário
+    const { data: profile, error: profileError } = await supabase
+      .from('profiles')
+      .select('onboarding_completed')
+      .eq('id', session.user.id)
+      .single();
+    const onboardingDone = !!profile && profile.onboarding_completed === true;
+    if (!onboardingDone && req.nextUrl.pathname !== '/onboarding') {
+      return NextResponse.redirect(new URL('/onboarding', req.url));
+    }
+    if (onboardingDone && req.nextUrl.pathname.startsWith('/onboarding')) {
+      return NextResponse.redirect(new URL('/home', req.url));
+    }
+  }
+
   return response;
 }
 

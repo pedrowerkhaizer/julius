@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { MessageCircle, User2 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
+import { Skeleton } from "@/components/ui/skeleton";
 import { addMonths, startOfMonth, endOfMonth, isWithinInterval, parseISO } from "date-fns";
 import { getUserBankAccounts, BankAccount, getBankName, getAccountTypeName, updateBankAccount, createBankAccount } from '@/lib/bankAccounts';
 
@@ -101,6 +102,7 @@ export default function EventsPage() {
   const router = useRouter();
   // Entradas e saídas
   const [events, setEvents] = useState<Entry[]>([]);
+  const [eventsLoading, setEventsLoading] = useState(true);
 
   // Dialogs
   const [showEntryDialog, setShowEntryDialog] = useState(false);
@@ -179,6 +181,7 @@ export default function EventsPage() {
 
   // Função para buscar transações do Supabase e mapear para camelCase
   async function fetchTransactions() {
+    setEventsLoading(true);
     const { data, error } = await supabase
       .from('transactions')
       .select('*')
@@ -198,6 +201,7 @@ export default function EventsPage() {
       }));
       setEvents(mapped);
     }
+    setEventsLoading(false);
   }
 
   // Função para buscar exceções de recorrência do Supabase
@@ -1119,163 +1123,188 @@ export default function EventsPage() {
 
         {/* KPIs - responsivo: 1/2/3 por linha */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-12">
-          <Card onClick={() => setOpenKpiDialog("income")} className="cursor-pointer hover:ring-2 hover:ring-lime-400 transition">
-            <CardHeader className="pb-3">
-              <div className="flex items-center gap-2">
-                <TrendingUp className="w-5 h-5 text-lime-500" />
-                <CardTitle className="text-lg">Entradas</CardTitle>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-foreground">
-                {new Intl.NumberFormat("pt-BR", {
-                  style: "currency",
-                  currency: "BRL",
-                }).format(totalIncome)}
-              </div>
-              <p className="text-sm text-muted-foreground mt-1">
-                {allEvents.filter(e => e.type === "income").length === 0 ? "Nenhuma entrada no período" : `${allEvents.filter(e => e.type === "income").length} entrada(s) no período`}
-              </p>
-            </CardContent>
-          </Card>
-          <Card onClick={() => setOpenKpiDialog("expense")} className="cursor-pointer hover:ring-2 hover:ring-red-400 transition">
-            <CardHeader className="pb-3">
-              <div className="flex items-center gap-2">
-                <TrendingDown className="w-5 h-5 text-red-500" />
-                <CardTitle className="text-lg">Saídas</CardTitle>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-foreground">
-                {new Intl.NumberFormat("pt-BR", {
-                  style: "currency",
-                  currency: "BRL",
-                }).format(totalExpense)}
-              </div>
-              <p className="text-sm text-muted-foreground mt-1">
-                {allEvents.filter(e => e.type === "expense").length === 0 ? "Nenhuma saída no período" : `${allEvents.filter(e => e.type === "expense").length} saída(s) no período`}
-              </p>
-            </CardContent>
-          </Card>
-          <Card onClick={() => setOpenKpiDialog("fixed")} className="cursor-pointer hover:ring-2 hover:ring-orange-400 transition">
-            <CardHeader className="pb-3">
-              <div className="flex items-center gap-2">
-                <AlertCircle className="w-5 h-5 text-orange-500" />
-                <CardTitle className="text-lg">Fixas</CardTitle>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-foreground">
-                {new Intl.NumberFormat("pt-BR", {
-                  style: "currency",
-                  currency: "BRL",
-                }).format(totalFixedExpense)}
-              </div>
-              <p className="text-sm text-muted-foreground mt-1">
-                {allEvents.filter(e => e.type === "expense" && e.expenseType === "fixed").length === 0 ? "Nenhuma despesa fixa no período" : `${allEvents.filter(e => e.type === "expense" && e.expenseType === "fixed").length} despesa(s) fixa(s) no período`}
-              </p>
-            </CardContent>
-          </Card>
-          <Card onClick={() => setOpenKpiDialog("variable")} className="cursor-pointer hover:ring-2 hover:ring-purple-400 transition">
-            <CardHeader className="pb-3">
-              <div className="flex items-center gap-2">
-                <AlertCircle className="w-5 h-5 text-purple-500" />
-                <CardTitle className="text-lg">Variáveis</CardTitle>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-foreground">
-                {new Intl.NumberFormat("pt-BR", {
-                  style: "currency",
-                  currency: "BRL",
-                }).format(totalVariableExpense)}
-              </div>
-              <p className="text-sm text-muted-foreground mt-1">
-                {allEvents.filter(e => e.type === "expense" && e.expenseType === "variable").length === 0 ? "Nenhuma despesa variável no período" : `${allEvents.filter(e => e.type === "expense" && e.expenseType === "variable").length} despesa(s) variável(is) no período`}
-              </p>
-            </CardContent>
-          </Card>
-          <Card onClick={() => setOpenKpiDialog("subscription")} className="cursor-pointer hover:ring-2 hover:ring-blue-400 transition">
-            <CardHeader className="pb-3">
-              <div className="flex items-center gap-2">
-                <CreditCard className="w-5 h-5 text-blue-500" />
-                <CardTitle className="text-lg">Assinaturas</CardTitle>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-foreground">
-                {new Intl.NumberFormat("pt-BR", {
-                  style: "currency",
-                  currency: "BRL",
-                }).format(totalSubscriptionExpense)}
-              </div>
-              <p className="text-sm text-muted-foreground mt-1">
-                {allEvents.filter(e => e.type === "expense" && e.expenseType === "subscription").length === 0 ? "Nenhuma assinatura no período" : `${allEvents.filter(e => e.type === "expense" && e.expenseType === "subscription").length} assinatura(s) no período`}
-              </p>
-            </CardContent>
-          </Card>
-          {/* KPI Performance do mês */}
-          <Card onClick={() => setOpenKpiDialog("performance")} className="cursor-pointer hover:ring-2 hover:ring-lime-600 transition">
-            <CardHeader className="pb-3">
-              <div className="flex items-center gap-2">
-                <span className="inline-block w-5 h-5 rounded-full flex items-center justify-center" style={{ background: monthPerformance > 0 ? '#22c55e' : monthPerformance < 0 ? '#ef4444' : '#64748b' }}>
-                  <span className="text-white font-bold">{monthPerformance > 0 ? '+' : monthPerformance < 0 ? '-' : '='}</span>
-                </span>
-                <CardTitle className="text-lg">Performance do Mês</CardTitle>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className={`text-2xl font-bold ${monthPerformance > 0 ? 'text-lime-500' : monthPerformance < 0 ? 'text-red-500' : 'text-muted-foreground'}`}>
-                {new Intl.NumberFormat("pt-BR", {
-                  style: "currency",
-                  currency: "BRL",
-                }).format(monthPerformance)}
-              </div>
-              <p className="text-sm text-muted-foreground mt-1">
-                {monthPerformance > 0 ? "Saldo positivo no período" : monthPerformance < 0 ? "Saldo negativo no período" : "Equilíbrio no período"}
-              </p>
-            </CardContent>
-          </Card>
-          {/* KPI Saldo das Contas */}
-          <Card onClick={() => setOpenKpiDialog("balance")} className="cursor-pointer hover:ring-2 hover:ring-blue-400 transition">
-            <CardHeader className="pb-3">
-              <div className="flex items-center gap-2">
-                <Building2 className="w-5 h-5 text-blue-500" />
-                <CardTitle className="text-lg">Saldo das Contas</CardTitle>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-foreground">
-                {new Intl.NumberFormat("pt-BR", {
-                  style: "currency",
-                  currency: "BRL",
-                }).format(totalAccountBalance)}
-              </div>
-              <p className="text-sm text-muted-foreground mt-1">
-                {bankAccounts.length === 0 ? "Nenhuma conta configurada" : `${bankAccounts.length} conta(s) configurada(s)`}
-              </p>
-            </CardContent>
-          </Card>
-          {/* KPI Saldo Projetado */}
-          <Card onClick={() => setOpenKpiDialog("projected")} className="cursor-pointer hover:ring-2 hover:ring-blue-400 transition">
-            <CardHeader className="pb-3">
-              <div className="flex items-center gap-2">
-                <Building2 className="w-5 h-5 text-blue-500" />
-                <CardTitle className="text-lg">Saldo Projetado</CardTitle>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-foreground">
-                {new Intl.NumberFormat("pt-BR", {
-                  style: "currency",
-                  currency: "BRL",
-                }).format(projectedBalance)}
-              </div>
-              <p className="text-sm text-muted-foreground mt-1">
-                Até {formatDateFriendly(projectionDate)}
-              </p>
-            </CardContent>
-          </Card>
+          {(userLoading || (
+            totalIncome === 0 &&
+            totalExpense === 0 &&
+            totalFixedExpense === 0 &&
+            totalVariableExpense === 0 &&
+            totalSubscriptionExpense === 0 &&
+            totalAccountBalance === 0 &&
+            monthPerformance === 0 &&
+            projectedBalance === 0
+          )) ? (
+            Array.from({ length: 8 }).map((_, i) => (
+              <Card key={i}>
+                <CardHeader className="pb-3">
+                  <Skeleton className="h-5 w-24" />
+                </CardHeader>
+                <CardContent>
+                  <Skeleton className="h-8 w-32 mb-2" />
+                  <Skeleton className="h-4 w-48" />
+                </CardContent>
+              </Card>
+            ))
+          ) : (
+            <>
+              <Card onClick={() => setOpenKpiDialog("income")} className="cursor-pointer hover:ring-2 hover:ring-lime-400 transition">
+                <CardHeader className="pb-3">
+                  <div className="flex items-center gap-2">
+                    <TrendingUp className="w-5 h-5 text-lime-500" />
+                    <CardTitle className="text-lg">Entradas</CardTitle>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold text-foreground">
+                    {new Intl.NumberFormat("pt-BR", {
+                      style: "currency",
+                      currency: "BRL",
+                    }).format(totalIncome)}
+                  </div>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    {allEvents.filter(e => e.type === "income").length === 0 ? "Nenhuma entrada no período" : `${allEvents.filter(e => e.type === "income").length} entrada(s) no período`}
+                  </p>
+                </CardContent>
+              </Card>
+              <Card onClick={() => setOpenKpiDialog("expense")} className="cursor-pointer hover:ring-2 hover:ring-red-400 transition">
+                <CardHeader className="pb-3">
+                  <div className="flex items-center gap-2">
+                    <TrendingDown className="w-5 h-5 text-red-500" />
+                    <CardTitle className="text-lg">Saídas</CardTitle>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold text-foreground">
+                    {new Intl.NumberFormat("pt-BR", {
+                      style: "currency",
+                      currency: "BRL",
+                    }).format(totalExpense)}
+                  </div>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    {allEvents.filter(e => e.type === "expense").length === 0 ? "Nenhuma saída no período" : `${allEvents.filter(e => e.type === "expense").length} saída(s) no período`}
+                  </p>
+                </CardContent>
+              </Card>
+              <Card onClick={() => setOpenKpiDialog("fixed")} className="cursor-pointer hover:ring-2 hover:ring-orange-400 transition">
+                <CardHeader className="pb-3">
+                  <div className="flex items-center gap-2">
+                    <AlertCircle className="w-5 h-5 text-orange-500" />
+                    <CardTitle className="text-lg">Fixas</CardTitle>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold text-foreground">
+                    {new Intl.NumberFormat("pt-BR", {
+                      style: "currency",
+                      currency: "BRL",
+                    }).format(totalFixedExpense)}
+                  </div>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    {allEvents.filter(e => e.type === "expense" && e.expenseType === "fixed").length === 0 ? "Nenhuma despesa fixa no período" : `${allEvents.filter(e => e.type === "expense" && e.expenseType === "fixed").length} despesa(s) fixa(s) no período`}
+                  </p>
+                </CardContent>
+              </Card>
+              <Card onClick={() => setOpenKpiDialog("variable")} className="cursor-pointer hover:ring-2 hover:ring-purple-400 transition">
+                <CardHeader className="pb-3">
+                  <div className="flex items-center gap-2">
+                    <AlertCircle className="w-5 h-5 text-purple-500" />
+                    <CardTitle className="text-lg">Variáveis</CardTitle>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold text-foreground">
+                    {new Intl.NumberFormat("pt-BR", {
+                      style: "currency",
+                      currency: "BRL",
+                    }).format(totalVariableExpense)}
+                  </div>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    {allEvents.filter(e => e.type === "expense" && e.expenseType === "variable").length === 0 ? "Nenhuma despesa variável no período" : `${allEvents.filter(e => e.type === "expense" && e.expenseType === "variable").length} despesa(s) variável(is) no período`}
+                  </p>
+                </CardContent>
+              </Card>
+              <Card onClick={() => setOpenKpiDialog("subscription")} className="cursor-pointer hover:ring-2 hover:ring-blue-400 transition">
+                <CardHeader className="pb-3">
+                  <div className="flex items-center gap-2">
+                    <CreditCard className="w-5 h-5 text-blue-500" />
+                    <CardTitle className="text-lg">Assinaturas</CardTitle>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold text-foreground">
+                    {new Intl.NumberFormat("pt-BR", {
+                      style: "currency",
+                      currency: "BRL",
+                    }).format(totalSubscriptionExpense)}
+                  </div>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    {allEvents.filter(e => e.type === "expense" && e.expenseType === "subscription").length === 0 ? "Nenhuma assinatura no período" : `${allEvents.filter(e => e.type === "expense" && e.expenseType === "subscription").length} assinatura(s) no período`}
+                  </p>
+                </CardContent>
+              </Card>
+              {/* KPI Performance do mês */}
+              <Card onClick={() => setOpenKpiDialog("performance")} className="cursor-pointer hover:ring-2 hover:ring-lime-600 transition">
+                <CardHeader className="pb-3">
+                  <div className="flex items-center gap-2">
+                    <span className="inline-block w-5 h-5 rounded-full flex items-center justify-center" style={{ background: monthPerformance > 0 ? '#22c55e' : monthPerformance < 0 ? '#ef4444' : '#64748b' }}>
+                      <span className="text-white font-bold">{monthPerformance > 0 ? '+' : monthPerformance < 0 ? '-' : '='}</span>
+                    </span>
+                    <CardTitle className="text-lg">Performance do Mês</CardTitle>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <div className={`text-2xl font-bold ${monthPerformance > 0 ? 'text-lime-500' : monthPerformance < 0 ? 'text-red-500' : 'text-muted-foreground'}`}>
+                    {new Intl.NumberFormat("pt-BR", {
+                      style: "currency",
+                      currency: "BRL",
+                    }).format(monthPerformance)}
+                  </div>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    {monthPerformance > 0 ? "Saldo positivo no período" : monthPerformance < 0 ? "Saldo negativo no período" : "Equilíbrio no período"}
+                  </p>
+                </CardContent>
+              </Card>
+              {/* KPI Saldo das Contas */}
+              <Card onClick={() => setOpenKpiDialog("balance")} className="cursor-pointer hover:ring-2 hover:ring-blue-400 transition">
+                <CardHeader className="pb-3">
+                  <div className="flex items-center gap-2">
+                    <Building2 className="w-5 h-5 text-blue-500" />
+                    <CardTitle className="text-lg">Saldo das Contas</CardTitle>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold text-foreground">
+                    {new Intl.NumberFormat("pt-BR", {
+                      style: "currency",
+                      currency: "BRL",
+                    }).format(totalAccountBalance)}
+                  </div>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    {bankAccounts.length === 0 ? "Nenhuma conta configurada" : `${bankAccounts.length} conta(s) configurada(s)`}
+                  </p>
+                </CardContent>
+              </Card>
+              {/* KPI Saldo Projetado */}
+              <Card onClick={() => setOpenKpiDialog("projected")} className="cursor-pointer hover:ring-2 hover:ring-blue-400 transition">
+                <CardHeader className="pb-3">
+                  <div className="flex items-center gap-2">
+                    <Building2 className="w-5 h-5 text-blue-500" />
+                    <CardTitle className="text-lg">Saldo Projetado</CardTitle>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold text-foreground">
+                    {new Intl.NumberFormat("pt-BR", {
+                      style: "currency",
+                      currency: "BRL",
+                    }).format(projectedBalance)}
+                  </div>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Até {formatDateFriendly(projectionDate)}
+                  </p>
+                </CardContent>
+              </Card>
+            </>
+          )}
         </div>
 
         {/* Dialogs de detalhes dos KPIs */}
@@ -1586,7 +1615,18 @@ export default function EventsPage() {
           </CardHeader>
           <CardContent className="p-0">
             <div className="divide-y">
-              {allEvents.length === 0 ? (
+              {userLoading || eventsLoading ? (
+                // Skeleton loaders para timeline
+                <>
+                  {[1, 2, 3].map(i => (
+                    <div key={i} className="p-4">
+                      <Skeleton className="h-6 w-48 mb-2" />
+                      <Skeleton className="h-4 w-full mb-2" />
+                      <Skeleton className="h-4 w-32" />
+                    </div>
+                  ))}
+                </>
+              ) : allEvents.length === 0 ? (
                 <div className="text-center py-12 text-muted-foreground">
                   Nenhum evento cadastrado
                 </div>

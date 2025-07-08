@@ -8,19 +8,18 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Progress } from '@/components/ui/progress';
-import { Separator } from '@/components/ui/separator';
+import { Skeleton } from '@/components/ui/skeleton';
 import { 
   ArrowRight, 
   ArrowLeft, 
   Wallet, 
-  CreditCard, 
   Calendar, 
-  Shield,
+  Building2,
   CheckCircle,
   Info,
   Plus,
   Trash2,
-  Building2
+  AlertCircle
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -34,6 +33,10 @@ import {
   BankAccount,
   CreateAccountData
 } from '@/lib/bankAccounts';
+import { supabase } from '@/lib/supabaseClient';
+import { getUserProfile, createUserProfile, updateUserProfile } from '@/lib/supabaseClient';
+import TransactionForm from '@/components/TransactionForm';
+import WhatsAppInput from '@/components/WhatsAppInput';
 
 function formatDateFriendly(date: string | Date): string {
   const d = typeof date === 'string' ? new Date(date) : date;
@@ -48,37 +51,32 @@ function formatDateFriendly(date: string | Date): string {
   }
 }
 
+interface Transaction {
+  id?: string;
+  description: string;
+  amount: number;
+  isRecurring: boolean;
+  day?: number;
+  date?: string;
+  type: "income" | "expense";
+  expenseType?: "fixed" | "variable" | "subscription";
+  subscriptionCard?: string;
+  subscriptionBillingDay?: number;
+  subscriptionCardDueDay?: number;
+  recurrenceEndDate?: string;
+}
+
 const STEPS = [
-  {
-    id: 1,
-    title: 'Conceito Básico',
-    description: 'Entenda como funciona o controle de limites'
-  },
-  {
-    id: 2,
-    title: 'Configuração Inicial',
-    description: 'Defina seus dias de pagamento e vencimento'
-  },
-  {
-    id: 3,
-    title: 'Contas Bancárias',
-    description: 'Configure suas contas e saldos atuais'
-  },
-  {
-    id: 4,
-    title: 'Conexão Bancária',
-    description: 'Conecte seus bancos via Open Finance'
-  }
+  { id: 1, title: 'Seu Perfil', description: 'Informe seu nome e WhatsApp' },
+  { id: 2, title: 'Receitas Recorrentes', description: 'Cadastre suas receitas fixas (ex: salário, pensão, etc)' },
+  { id: 3, title: 'Despesas Recorrentes', description: 'Cadastre suas despesas fixas (ex: aluguel, energia, etc)' },
+  { id: 4, title: 'Contas Bancárias', description: 'Configure suas contas e saldos atuais' },
 ];
 
 export default function OnboardingPage() {
   const router = useRouter();
   const [currentStep, setCurrentStep] = useState(1);
-  const [formData, setFormData] = useState({
-    paymentDay: '',
-    cardDueDay: '',
-    consentGiven: false
-  });
+  const [loading, setLoading] = useState(true);
 
   // Estados para contas bancárias
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
@@ -94,10 +92,46 @@ export default function OnboardingPage() {
   const [showAddAccount, setShowAddAccount] = useState(false);
   const [savingAccount, setSavingAccount] = useState(false);
 
-  // Carregar contas do Supabase ao abrir o passo 3
+  // Estados para nome, whatsapp, receitas, despesas
+  const [nome, setNome] = useState('');
+  const [whatsapp, setWhatsapp] = useState('');
+  const [profileLoading, setProfileLoading] = useState(true);
+  const [profileError, setProfileError] = useState<string | null>(null);
+  const [incomes, setIncomes] = useState<Transaction[]>([]);
+  const [expenses, setExpenses] = useState<Transaction[]>([]);
+
+  // Carregar perfil ao abrir onboarding
   useEffect(() => {
-    if (currentStep === 3) {
-      async function loadAccounts() {
+    async function loadProfile() {
+      setProfileLoading(true);
+      setProfileError(null);
+      try {
+        const { data: authData, error: authError } = await supabase.auth.getUser();
+        if (authError || !authData?.user) throw new Error('Usuário não autenticado');
+        const userId = authData.user.id;
+        let profile;
+        try {
+          profile = await getUserProfile(userId);
+        } catch (err: any) {
+          // Se não existe, cria
+          profile = await createUserProfile(userId, authData.user.email || '', '');
+        }
+        setNome(profile.nome || '');
+        setWhatsapp(profile.whatsapp || '');
+      } catch (err: any) {
+        setProfileError(err.message || 'Erro ao carregar perfil');
+      } finally {
+        setProfileLoading(false);
+        setLoading(false);
+      }
+    }
+    loadProfile();
+  }, []);
+
+  // Carregar contas do Supabase ao abrir o passo 4
+  useEffect(() => {
+    const loadAccounts = async () => {
+      if (currentStep === 4) {
         setAccountsLoading(true);
         setAccountsError(null);
         try {
@@ -109,11 +143,29 @@ export default function OnboardingPage() {
           setAccountsLoading(false);
         }
       }
-      loadAccounts();
-    }
+    };
+    loadAccounts();
   }, [currentStep]);
 
   const handleNext = () => {
+    // Validação antes de avançar
+    if (currentStep === 1) {
+      if (!nome.trim() || !whatsapp.trim()) {
+        toast.error('Preencha nome e WhatsApp');
+        return;
+      }
+    } else if (currentStep === 2) {
+      if (incomes.length === 0) {
+        toast.error('Cadastre pelo menos uma receita');
+        return;
+      }
+    } else if (currentStep === 3) {
+      if (expenses.length === 0) {
+        toast.error('Cadastre pelo menos uma despesa');
+        return;
+      }
+    }
+
     if (currentStep < STEPS.length) {
       setCurrentStep(prev => prev + 1);
     }
@@ -123,16 +175,6 @@ export default function OnboardingPage() {
     if (currentStep > 1) {
       setCurrentStep(prev => prev - 1);
     }
-  };
-
-  const handlePluggyConnect = () => {
-    // Simulate Pluggy connection
-    toast.info('Abrindo conexão segura com seu banco...');
-    
-    setTimeout(() => {
-      setFormData(prev => ({ ...prev, consentGiven: true }));
-      toast.success('Conexão estabelecida com sucesso!');
-    }, 2000);
   };
 
   // Adicionar nova conta (Supabase)
@@ -181,22 +223,116 @@ export default function OnboardingPage() {
     }
   };
 
-  // Finalizar onboarding: apenas salva config inicial (dias) e navega
-  const handleFinish = () => {
-    if (!formData.paymentDay || !formData.cardDueDay) {
-      toast.error('Preencha todos os campos obrigatórios');
+  // handleFinish: salvar nome, whatsapp, receitas, despesas, contas e marcar onboarding_completed = true
+  const handleFinish = async () => {
+    if (!nome.trim() || !whatsapp.trim()) {
+      toast.error('Preencha nome e WhatsApp');
+      setCurrentStep(1);
+      return;
+    }
+    if (incomes.length === 0) {
+      toast.error('Cadastre pelo menos uma receita');
+      setCurrentStep(2);
+      return;
+    }
+    if (expenses.length === 0) {
+      toast.error('Cadastre pelo menos uma despesa');
+      setCurrentStep(3);
       return;
     }
     if (bankAccounts.length === 0) {
       toast.error('Adicione pelo menos uma conta bancária');
+      setCurrentStep(4);
       return;
     }
-    // Aqui pode chamar saveOnboardingConfig se desejar salvar dias no Supabase
-    toast.success('Configuração inicial concluída!');
-    router.push('/home');
+    
+    setLoading(true);
+    try {
+      const { data: authData, error: authError } = await supabase.auth.getUser();
+      if (authError || !authData?.user) throw new Error('Usuário não autenticado');
+      const userId = authData.user.id;
+      
+      // Salvar perfil com onboarding_completed = true
+      await updateUserProfile(userId, { 
+        nome, 
+        whatsapp, 
+        onboarding_completed: true 
+      });
+      
+      // Salvar receitas
+      for (const inc of incomes) {
+        await supabase.from('transactions').insert({
+          user_id: userId,
+          description: inc.description,
+          amount: inc.amount,
+          is_recurring: inc.isRecurring,
+          type: 'income',
+          day: inc.isRecurring ? inc.day : null,
+          date: !inc.isRecurring ? inc.date : null,
+          recurrence_end_date: inc.recurrenceEndDate || null,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+      }
+      
+      // Salvar despesas
+      for (const exp of expenses) {
+        await supabase.from('transactions').insert({
+          user_id: userId,
+          description: exp.description,
+          amount: exp.amount,
+          is_recurring: exp.isRecurring,
+          type: 'expense',
+          expense_type: exp.expenseType,
+          day: exp.isRecurring ? exp.day : null,
+          date: !exp.isRecurring ? exp.date : null,
+          recurrence_end_date: exp.recurrenceEndDate || null,
+          subscription_card: exp.subscriptionCard || null,
+          subscription_billing_day: exp.subscriptionBillingDay || null,
+          subscription_card_due_day: exp.subscriptionCardDueDay || null,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+      }
+      
+      toast.success('Onboarding concluído!');
+      router.push('/home');
+    } catch (err: any) {
+      toast.error(err.message || 'Erro ao finalizar onboarding');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const progress = (currentStep / STEPS.length) * 100;
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-background pt-16 sm:pt-0">
+        <div className="max-w-2xl mx-auto p-4 sm:p-6 lg:p-8">
+          <div className="text-center mb-8">
+            <Skeleton className="w-10 h-10 rounded-lg mx-auto mb-4" />
+            <Skeleton className="h-8 w-32 mx-auto mb-2" />
+            <Skeleton className="h-4 w-64 mx-auto" />
+          </div>
+          <Skeleton className="h-2 w-full mb-8" />
+          <Card>
+            <CardHeader>
+              <Skeleton className="h-6 w-48 mb-2" />
+              <Skeleton className="h-4 w-64" />
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                <Skeleton className="h-10 w-full" />
+                <Skeleton className="h-10 w-full" />
+                <Skeleton className="h-10 w-full" />
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background pt-16 sm:pt-0">
@@ -210,7 +346,7 @@ export default function OnboardingPage() {
             <h1 className="text-2xl font-bold">Julius</h1>
           </div>
           <p className="text-muted-foreground">
-            Vamos configurar seu assistente financeiro em 3 passos simples
+            Vamos configurar seu assistente financeiro em 4 passos simples
           </p>
         </div>
 
@@ -234,7 +370,7 @@ export default function OnboardingPage() {
               {currentStep === 1 && <Info className="w-5 h-5 text-indigo-500" />}
               {currentStep === 2 && <Calendar className="w-5 h-5 text-indigo-500" />}
               {currentStep === 3 && <Building2 className="w-5 h-5 text-indigo-500" />}
-              {currentStep === 4 && <Shield className="w-5 h-5 text-indigo-500" />}
+              {currentStep === 4 && <Building2 className="w-5 h-5 text-indigo-500" />}
               {STEPS[currentStep - 1].title}
             </CardTitle>
             <p className="text-muted-foreground">
@@ -242,109 +378,61 @@ export default function OnboardingPage() {
             </p>
           </CardHeader>
           <CardContent>
-            {/* Step 1: Concept Explanation */}
+            {/* Step 1: Seu Perfil */}
             {currentStep === 1 && (
               <div className="space-y-6">
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="p-4 border rounded-lg">
-                    <div className="flex items-center gap-2 mb-3">
-                      <Wallet className="w-5 h-5 text-lime-500" />
-                      <h3 className="font-semibold">Limite Diário</h3>
-                    </div>
-                    <p className="text-sm text-muted-foreground">
-                      Para débito/PIX, calculamos quanto você pode gastar por dia 
-                      com base no seu limite mensal e dias úteis restantes.
-                    </p>
+                {profileLoading ? (
+                  <div className="space-y-4">
+                    <Skeleton className="h-10 w-full" />
+                    <Skeleton className="h-10 w-full" />
                   </div>
-                  
-                  <div className="p-4 border rounded-lg">
-                    <div className="flex items-center gap-2 mb-3">
-                      <CreditCard className="w-5 h-5 text-indigo-500" />
-                      <h3 className="font-semibold">Cartão de Crédito</h3>
+                ) : (
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div>
+                      <Label htmlFor="nome">Nome</Label>
+                      <Input 
+                        id="nome" 
+                        value={nome} 
+                        onChange={e => setNome(e.target.value)} 
+                        placeholder="Como prefere ser chamado?" 
+                      />
                     </div>
-                    <p className="text-sm text-muted-foreground">
-                      Para o cartão, acumulamos os gastos durante o mês e 
-                      debitamos o valor total apenas no vencimento.
-                    </p>
+                    <div>
+                      <WhatsAppInput
+                        value={whatsapp}
+                        onChange={setWhatsapp}
+                        placeholder="+55 24 98124-0000"
+                      />
+                    </div>
                   </div>
-                </div>
-                
-                <div className="p-4 bg-lime-50 border border-lime-200 rounded-lg">
-                  <h4 className="font-semibold text-lime-800 mb-2">
-                    Por que isso é útil?
-                  </h4>
-                  <ul className="text-sm text-lime-700 space-y-1">
-                    <li>• Evita que você gaste todo o limite no início do mês</li>
-                    <li>• Ajuda a distribuir os gastos de forma equilibrada</li>
-                    <li>• Mostra exatamente quanto você pode gastar hoje</li>
-                  </ul>
-                </div>
+                )}
               </div>
             )}
 
-            {/* Step 2: Initial Configuration */}
+            {/* Step 2: Receitas Recorrentes */}
             {currentStep === 2 && (
               <div className="space-y-6">
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="paymentDay">Dia do seu pagamento</Label>
-                    <Select 
-                      value={formData.paymentDay} 
-                      onValueChange={(value) => setFormData(prev => ({ ...prev, paymentDay: value }))}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Selecione o dia" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {Array.from({ length: 28 }, (_, i) => i + 1).map(day => (
-                          <SelectItem key={day} value={day.toString()}>
-                            Dia {day}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <p className="text-xs text-muted-foreground">
-                      Quando você recebe seu salário
-                    </p>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="cardDueDay">Vencimento do cartão</Label>
-                    <Select 
-                      value={formData.cardDueDay} 
-                      onValueChange={(value) => setFormData(prev => ({ ...prev, cardDueDay: value }))}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Selecione o dia" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {Array.from({ length: 28 }, (_, i) => i + 1).map(day => (
-                          <SelectItem key={day} value={day.toString()}>
-                            Dia {day}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <p className="text-xs text-muted-foreground">
-                      Quando vence sua fatura
-                    </p>
-                  </div>
-                </div>
-
-                <div className="p-4 bg-indigo-50 border border-indigo-200 rounded-lg">
-                  <h4 className="font-semibold text-indigo-800 mb-2">
-                    💡 Dica importante
-                  </h4>
-                  <p className="text-sm text-indigo-700">
-                    Esses dias são fundamentais para calcular seus limites diários 
-                    e projetar quando o dinheiro vai entrar e sair da sua conta.
-                  </p>
-                </div>
+                <TransactionForm
+                  type="income"
+                  transactions={incomes}
+                  onTransactionsChange={setIncomes}
+                />
               </div>
             )}
 
-            {/* Step 3: Bank Accounts Configuration */}
+            {/* Step 3: Despesas Recorrentes */}
             {currentStep === 3 && (
+              <div className="space-y-6">
+                <TransactionForm
+                  type="expense"
+                  transactions={expenses}
+                  onTransactionsChange={setExpenses}
+                />
+              </div>
+            )}
+
+            {/* Step 4: Contas Bancárias */}
+            {currentStep === 4 && (
               <div className="space-y-6">
                 <div className="text-center py-4">
                   <Building2 className="w-12 h-12 text-indigo-500 mx-auto mb-3" />
@@ -358,8 +446,11 @@ export default function OnboardingPage() {
 
                 {/* Lista de contas existentes */}
                 {accountsLoading ? (
-                  <div className="text-center py-8">
-                    <p>Carregando suas contas bancárias...</p>
+                  <div className="space-y-3">
+                    <Skeleton className="h-4 w-32" />
+                    {[1, 2, 3].map(i => (
+                      <Skeleton key={i} className="h-20 w-full" />
+                    ))}
                   </div>
                 ) : accountsError ? (
                   <div className="text-center py-8 text-red-500">
@@ -528,58 +619,34 @@ export default function OnboardingPage() {
                 </div>
               </div>
             )}
-
-            {/* Step 4: Bank Connection */}
-            {currentStep === 4 && (
-              <div className="space-y-6">
-                <div className="text-center py-8">
-                  <Shield className="w-16 h-16 text-indigo-500 mx-auto mb-4" />
-                  <h3 className="text-xl font-semibold mb-2">
-                    Conecte seus bancos com segurança
-                  </h3>
-                  <p className="text-muted-foreground mb-6">
-                    Usamos o Open Finance para conectar suas contas de forma 
-                    segura e sincronizar suas transações automaticamente.
-                  </p>
-                  
-                  {!formData.consentGiven ? (
-                    <Button 
-                      onClick={handlePluggyConnect}
-                      className="bg-lime-500 hover:bg-lime-600"
-                      size="lg"
-                    >
-                      <Shield className="w-5 h-5 mr-2" />
-                      Conectar com Open Finance
-                    </Button>
-                  ) : (
-                    <div className="flex items-center justify-center gap-2 text-lime-600">
-                      <CheckCircle className="w-5 h-5" />
-                      <span className="font-medium">Conexão estabelecida!</span>
-                    </div>
-                  )}
-                </div>
-
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="p-4 border rounded-lg">
-                    <h4 className="font-semibold mb-2">🔒 Segurança</h4>
-                    <p className="text-sm text-muted-foreground">
-                      Suas credenciais não passam por nossos servidores. 
-                      Tudo é criptografado e regulamentado pelo Banco Central.
-                    </p>
-                  </div>
-                  
-                  <div className="p-4 border rounded-lg">
-                    <h4 className="font-semibold mb-2">🔄 Sincronização</h4>
-                    <p className="text-sm text-muted-foreground">
-                      Suas transações são sincronizadas automaticamente, 
-                      mantendo seus limites sempre atualizados.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            )}
           </CardContent>
         </Card>
+
+        {/* Validação e alertas */}
+        {currentStep === 1 && (!nome.trim() || !whatsapp.trim()) && (
+          <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-yellow-600" />
+            <span className="text-sm text-yellow-800">Preencha nome e WhatsApp para continuar</span>
+          </div>
+        )}
+        {currentStep === 2 && incomes.length === 0 && (
+          <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-yellow-600" />
+            <span className="text-sm text-yellow-800">Cadastre pelo menos uma receita para continuar</span>
+          </div>
+        )}
+        {currentStep === 3 && expenses.length === 0 && (
+          <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-yellow-600" />
+            <span className="text-sm text-yellow-800">Cadastre pelo menos uma despesa para continuar</span>
+          </div>
+        )}
+        {currentStep === 4 && bankAccounts.length === 0 && (
+          <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-yellow-600" />
+            <span className="text-sm text-yellow-800">Adicione pelo menos uma conta bancária para continuar</span>
+          </div>
+        )}
 
         {/* Navigation */}
         <div className="flex items-center justify-between mt-8">
@@ -601,9 +668,9 @@ export default function OnboardingPage() {
             <Button 
               onClick={handleFinish}
               className="bg-lime-500 hover:bg-lime-600"
-              disabled={!formData.paymentDay || !formData.cardDueDay}
+              disabled={!nome.trim() || !whatsapp.trim() || incomes.length === 0 || expenses.length === 0 || bankAccounts.length === 0 || loading}
             >
-              Finalizar Configuração
+              {loading ? "Finalizando..." : "Finalizar Configuração"}
               <CheckCircle className="w-4 h-4 ml-2" />
             </Button>
           )}
