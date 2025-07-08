@@ -1,1807 +1,328 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Calendar, TrendingUp, TrendingDown, Plus, AlertCircle, CreditCard, LogOut, Settings, Pencil, Trash2, MoreVertical, Building2 } from "lucide-react";
 import { toast } from "sonner";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { supabase } from "@/lib/supabaseClient";
 import { useRouter } from "next/navigation";
-import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
-import {
-  DropdownMenu,
-  DropdownMenuTrigger,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-} from "@/components/ui/dropdown-menu";
-import { MessageCircle, User2 } from "lucide-react";
-import { Switch } from "@/components/ui/switch";
-import { Skeleton } from "@/components/ui/skeleton";
-import { addMonths, startOfMonth, endOfMonth, isWithinInterval, parseISO } from "date-fns";
-import { getUserBankAccounts, BankAccount, getBankName, getAccountTypeName, updateBankAccount, createBankAccount } from '@/lib/bankAccounts';
+import { Transaction } from "@/lib/types/finance";
+import { CREDIT_CARDS } from "@/lib/utils/constants";
 
-// Remover a interface BankAccount local
-// Em todos os lugares, usar apenas BankAccount importado da lib
-// Substituir account.accountType por account.account_type
-// Substituir todos os usos de bankAccounts para refletir contas reais do Supabase
+// Custom hooks
+import { useKPIs } from "@/hooks/useKPIs";
+import { useTimeline } from "@/hooks/useTimeline";
+import { useTransactions } from "@/hooks/useTransactions";
+import { useBankAccounts } from "@/hooks/useBankAccounts";
+import { useUserProfile } from "@/hooks/useUserProfile";
 
-// Tipo para entrada/saída
-interface Entry {
-  id: string;
-  description: string;
-  amount: number;
-  isRecurring: boolean;
-  day?: number; // para recorrente
-  date?: string; // para única
-  type: "income" | "expense";
-  expenseType?: "fixed" | "variable" | "subscription"; // novo campo para tipo de despesa
-  // Campos específicos para assinatura
-  subscriptionCard?: string;
-  subscriptionBillingDay?: number;
-  subscriptionCardDueDay?: number;
-  recurrenceEndDate?: string;
-  transactionIdOriginal?: string; // para exceções recorrentes
-}
+// Layout components
+import { PageHeader } from "@/components/layout/PageHeader";
+import { FloatingActionButtons } from "@/components/layout/FloatingActionButtons";
 
-const today = new Date();
+// Dashboard components
+import { KPIGrid } from "@/components/dashboard/KPIGrid";
+import { Timeline } from "@/components/dashboard/Timeline";
+import { PeriodFilterComponent } from "@/components/dashboard/PeriodFilter";
 
-function getTodayISO() {
-  return today.toISOString().split("T")[0];
-}
+// Dialog components
+import { TransactionDialog } from "@/components/dialogs/TransactionDialog";
+import { EditTransactionDialog } from "@/components/dialogs/EditTransactionDialog";
+import { DeleteTransactionDialog } from "@/components/dialogs/DeleteTransactionDialog";
+import { KPIDetailsDialog } from "@/components/dialogs/KPIDetailsDialog";
 
-// Lista de cartões para assinaturas
-const creditCards = [
-  { id: "nubank", name: "Nubank" },
-  { id: "itau", name: "Itaú" },
-  { id: "bradesco", name: "Bradesco" },
-  { id: "santander", name: "Santander" },
-  { id: "bb", name: "Banco do Brasil" },
-  { id: "caixa", name: "Caixa Econômica" },
-  { id: "inter", name: "Banco Inter" },
-  { id: "c6", name: "C6 Bank" },
-  { id: "picpay", name: "PicPay" },
-  { id: "mercadopago", name: "Mercado Pago" },
-  { id: "outro", name: "Outro" },
-];
-
-// Adicionar utilitário no topo:
-function formatDateFriendly(date: string | Date): string {
-  const d = typeof date === 'string' ? new Date(date) : date;
-  const now = new Date();
-  const day = d.getDate().toString().padStart(2, '0');
-  const month = d.toLocaleString('pt-BR', { month: 'short' });
-  const year = d.getFullYear();
-  if (year === now.getFullYear()) {
-    return `${day} ${month}`;
-  } else {
-    return `${day} ${month} ${year}`;
-  }
-}
-
-// Adicione no topo:
-function formatTimelineDate(date: string | Date): string {
-  const d = typeof date === 'string' ? new Date(date) : date;
-  const now = new Date();
-  const dayOfWeek = d.toLocaleString('pt-BR', { weekday: 'long' });
-  const day = d.getDate().toString().padStart(2, '0');
-  const month = d.toLocaleString('pt-BR', { month: 'long' });
-  const year = d.getFullYear();
-  if (year === now.getFullYear()) {
-    return `${dayOfWeek}, ${day} de ${month}`;
-  } else {
-    return `${dayOfWeek}, ${day} de ${month} de ${year}`;
-  }
-}
+// Converter CREDIT_CARDS para array mutável
+const creditCardsArray = CREDIT_CARDS.map(card => ({ id: card.id, name: card.name }));
 
 export default function EventsPage() {
   const router = useRouter();
-  // Entradas e saídas
-  const [events, setEvents] = useState<Entry[]>([]);
-  const [eventsLoading, setEventsLoading] = useState(true);
-
-  // Dialogs
-  const [showEntryDialog, setShowEntryDialog] = useState(false);
-  const [showExpenseDialog, setShowExpenseDialog] = useState(false);
-
-  // Formulário de entrada
-  const [entryDescription, setEntryDescription] = useState("");
-  const [entryAmount, setEntryAmount] = useState(0);
-  const [entryIsRecurring, setEntryIsRecurring] = useState(true);
-  const [entryDay, setEntryDay] = useState(1);
-  const [entryDate, setEntryDate] = useState(getTodayISO());
-  const [entryHasRecurrenceEndDate, setEntryHasRecurrenceEndDate] = useState(false);
-  const [entryRecurrenceEndDate, setEntryRecurrenceEndDate] = useState("");
-
-  // Formulário de saída
-  const [expenseDescription, setExpenseDescription] = useState("");
-  const [expenseAmount, setExpenseAmount] = useState(0);
-  const [expenseIsRecurring, setExpenseIsRecurring] = useState(true);
-  const [expenseDay, setExpenseDay] = useState(1);
-  const [expenseDate, setExpenseDate] = useState(getTodayISO());
-  const [expenseType, setExpenseType] = useState<"fixed" | "variable" | "subscription">("fixed");
-  const [expenseHasRecurrenceEndDate, setExpenseHasRecurrenceEndDate] = useState(false);
-  const [expenseRecurrenceEndDate, setExpenseRecurrenceEndDate] = useState("");
   
-  // Campos específicos para assinatura
-  const [subscriptionCard, setSubscriptionCard] = useState("");
-  const [subscriptionBillingDay, setSubscriptionBillingDay] = useState(1);
-  const [subscriptionCardDueDay, setSubscriptionCardDueDay] = useState(10);
+  // Custom hooks
+  const { profile: user, loading: userLoading } = useUserProfile();
+  const { 
+    accounts: bankAccounts, 
+    addAccount, 
+    updateAccount, 
+    deleteAccount 
+  } = useBankAccounts();
+  const { 
+    transactions, 
+    loading: transactionsLoading, 
+    addTransaction, 
+    updateTransaction, 
+    deleteTransaction,
+    updateRecurrenceException,
+    deleteRecurrenceException
+  } = useTransactions();
 
-  // Estado para dialog de detalhes dos KPIs
-  const [openKpiDialog, setOpenKpiDialog] = useState<null | "income" | "expense" | "fixed" | "variable" | "subscription" | "performance" | "balance" | "projected">(
-    null
-  );
-
-  // Estado do usuário
-  const [user, setUser] = useState<any>(null);
-  const [userLoading, setUserLoading] = useState(true);
-
-  // Estados para contas bancárias
-  const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
-
-  // Estados para edição/remoção
-  const [editingEvent, setEditingEvent] = useState<Entry | null>(null);
-  const [editingOccurrenceDate, setEditingOccurrenceDate] = useState<string | null>(null); // para recorrente
-  const [editingMode, setEditingMode] = useState<"single" | "all" | null>(null);
+  // Local state
+  const [period, setPeriod] = useState<'current' | 'next' | '3months' | 'custom'>('current');
+  const [customStart, setCustomStart] = useState(new Date().toISOString().split('T')[0]);
+  const [customEnd, setCustomEnd] = useState(new Date().toISOString().split('T')[0]);
+  
+  // Dialog states
+  const [showIncomeDialog, setShowIncomeDialog] = useState(false);
+  const [showExpenseDialog, setShowExpenseDialog] = useState(false);
   const [showEditDialog, setShowEditDialog] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
-  const [exceptionOverrides, setExceptionOverrides] = useState<Record<string, any>>({}); // { occurrenceKey: { ...override } }
-  const [exceptionDeletes, setExceptionDeletes] = useState<Record<string, boolean>>({}); // { occurrenceKey: true }
+  const [openKpiDialog, setOpenKpiDialog] = useState<string | null>(null);
+  
+  // Edit/Delete states
+  const [editingEvent, setEditingEvent] = useState<any>(null);
 
-  // Estados para edição de campos
-  const [editDescription, setEditDescription] = useState("");
-  const [editAmount, setEditAmount] = useState<number>(0);
+  // Estado para projeção
+  const [projectionDate, setProjectionDate] = useState(new Date().toISOString().split('T')[0]);
 
-  // Filtro de período
-  const [period, setPeriod] = useState<"current" | "next" | "3months" | "custom">("current");
-  const [customStart, setCustomStart] = useState(getTodayISO());
-  const [customEnd, setCustomEnd] = useState(getTodayISO());
+  // Custom hooks for calculations
+  const { kpis, dateRange, loading: kpisLoading } = useKPIs({
+    transactions,
+    bankAccounts,
+    period,
+    customStart,
+    customEnd,
+    loading: transactionsLoading
+  });
 
-  // Calcula o range de datas conforme o filtro
-  let rangeStart: Date, rangeEnd: Date;
-  if (period === "current") {
-    rangeStart = startOfMonth(today);
-    rangeEnd = endOfMonth(today);
-  } else if (period === "next") {
-    const next = addMonths(today, 1);
-    rangeStart = startOfMonth(next);
-    rangeEnd = endOfMonth(next);
-  } else if (period === "3months") {
-    rangeStart = startOfMonth(today);
-    rangeEnd = endOfMonth(addMonths(today, 2));
-  } else {
-    rangeStart = parseISO(customStart);
-    rangeEnd = parseISO(customEnd);
-  }
+  const { timelineEvents, groupedEvents, loading: timelineLoading } = useTimeline({
+    transactions,
+    dateRange,
+    loading: transactionsLoading
+  });
 
-  // Função para buscar transações do Supabase e mapear para camelCase
-  async function fetchTransactions() {
-    setEventsLoading(true);
-    const { data, error } = await supabase
-      .from('transactions')
-      .select('*')
-      .order('date', { ascending: true });
-    if (error) {
-      toast.error("Erro ao buscar transações");
-    } else {
-      // Mapeia os campos snake_case para camelCase
-      const mapped = (data || []).map((t: any) => ({
-        ...t,
-        isRecurring: t.is_recurring,
-        expenseType: t.expense_type,
-        subscriptionCard: t.subscription_card,
-        subscriptionBillingDay: t.subscription_billing_day,
-        subscriptionCardDueDay: t.subscription_card_due_day,
-        recurrenceEndDate: t.recurrence_end_date,
-      }));
-      setEvents(mapped);
-    }
-    setEventsLoading(false);
-  }
-
-  // Função para buscar exceções de recorrência do Supabase
-  async function fetchRecurrenceExceptions() {
-    const { data, error } = await supabase
-      .from('recurrence_exceptions')
-      .select('*');
-    if (!error && data) {
-      // Monta mapas para sobrescrever ou deletar ocorrências
-      const overrides: Record<string, any> = {};
-      const deletes: Record<string, boolean> = {};
-      data.forEach((ex: any) => {
-        const key = `${ex.transaction_id}_${ex.date}`;
-        if (ex.action === 'edit') {
-          if (!overrides[key] || new Date(ex.created_at) > new Date(overrides[key].created_at)) {
-            overrides[key] = ex;
-          }
-        }
-        if (ex.action === 'delete') deletes[key] = true;
-      });
-      setExceptionOverrides(overrides);
-      setExceptionDeletes(deletes);
-    }
-  }
-
-  // Substituir a função fetchBankAccounts para buscar do Supabase
-  async function fetchBankAccounts() {
-    try {
-      const accounts = await getUserBankAccounts();
-      setBankAccounts(accounts);
-    } catch (error) {
-      console.error('Erro ao carregar contas bancárias:', error);
-    }
-  }
-
-  // Carrega eventos do Supabase ao montar
-  useEffect(() => {
-    fetchTransactions();
-    fetchRecurrenceExceptions();
-    fetchBankAccounts();
-  }, []);
-
-  useEffect(() => {
-    async function fetchUser() {
-      const { data, error } = await supabase.auth.getUser();
-      if (data?.user) setUser(data.user);
-      setUserLoading(false);
-    }
-    fetchUser();
-  }, []);
-
-  // Função para calcular a data efetiva da assinatura
-  const calculateSubscriptionDate = (billingDay: number, cardDueDay: number) => {
-    const today = new Date();
-    const currentMonth = today.getMonth();
-    const currentYear = today.getFullYear();
+  // Calcular saldo projetado baseado na data selecionada
+  const projectedBalance = (() => {
+    const totalAccountBalance = bankAccounts.reduce((sum, account) => sum + account.balance, 0);
     
-    // Se a data de cobrança é depois do vencimento do cartão, vai para o próximo mês
-    if (billingDay > cardDueDay) {
-      const nextMonth = new Date(currentYear, currentMonth + 1, billingDay);
-      return nextMonth;
-    } else {
-      return new Date(currentYear, currentMonth, billingDay);
-    }
-  };
-
-  // Adiciona ou edita entrada
-  const handleAddEntry = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!entryDescription.trim() || !entryAmount || entryAmount <= 0) {
-      toast.error("Preencha todos os campos obrigatórios");
-      return;
-    }
-    if (entryIsRecurring && (!entryDay || entryDay < 1 || entryDay > 28)) {
-      toast.error("Selecione o dia do mês para recorrente");
-      return;
-    }
-    if (!entryIsRecurring && !entryDate) {
-      toast.error("Selecione a data da entrada única");
-      return;
-    }
-    console.log("[handleAddEntry] Iniciando inserção de entrada...");
-    const { data: userData, error: userError } = await supabase.auth.getUser();
-    if (userError || !userData?.user?.id) {
-      console.error("[handleAddEntry] Erro ao obter usuário:", userError);
-      toast.error("Erro ao obter usuário autenticado");
-      return;
-    }
-    const userId = userData.user.id;
-    console.log("[handleAddEntry] user_id:", userId);
-    const newEntry = {
-      user_id: userId,
-      description: entryDescription.trim(),
-      amount: entryAmount,
-      is_recurring: entryIsRecurring,
-      type: "income",
-      date: entryIsRecurring ? null : entryDate,
-      day: entryIsRecurring ? entryDay : null,
-      recurrence_end_date: entryIsRecurring && entryHasRecurrenceEndDate && entryRecurrenceEndDate ? entryRecurrenceEndDate : null,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-    console.log("[handleAddEntry] Payload para insert:", newEntry);
-    const { data, error } = await supabase.from('transactions').insert([newEntry]).select();
-    if (error) {
-      console.error("[handleAddEntry] Erro ao salvar transação:", error);
-      toast.error("Erro ao salvar transação");
-    } else {
-      console.log("[handleAddEntry] Transação salva com sucesso:", data);
-      // Atualiza o estado local com o id real do banco
-      if (data && data[0]) {
-        setEvents(prev => [...prev, {
-          ...data[0],
-          isRecurring: data[0].is_recurring,
-          expenseType: data[0].expense_type,
-          subscriptionCard: data[0].subscription_card,
-          subscriptionBillingDay: data[0].subscription_billing_day,
-          subscriptionCardDueDay: data[0].subscription_card_due_day,
-          recurrenceEndDate: data[0].recurrence_end_date,
-        }]);
-      }
-      toast.success("Transação salva!");
-      await fetchTransactions(); // Refresh automático
-      setEntryDescription("");
-      setEntryAmount(0);
-      setEntryDay(1);
-      setEntryDate(getTodayISO());
-      setEntryIsRecurring(true);
-      setEntryHasRecurrenceEndDate(false);
-      setEntryRecurrenceEndDate("");
-      setShowEntryDialog(false);
-    }
-  };
-
-  // Adiciona ou edita saída
-  const handleAddExpense = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!expenseDescription.trim() || !expenseAmount || expenseAmount <= 0) {
-      toast.error("Preencha todos os campos obrigatórios");
-      return;
-    }
-    if (expenseType === "subscription") {
-      if (!subscriptionCard) {
-        toast.error("Selecione o cartão da assinatura");
-        return;
-      }
-      if (!subscriptionBillingDay || subscriptionBillingDay < 1 || subscriptionBillingDay > 28) {
-        toast.error("Selecione a data de cobrança da assinatura");
-        return;
-      }
-      if (!subscriptionCardDueDay || subscriptionCardDueDay < 1 || subscriptionCardDueDay > 28) {
-        toast.error("Selecione a data de vencimento do cartão");
-        return;
-      }
-    } else {
-      if (expenseIsRecurring && (!expenseDay || expenseDay < 1 || expenseDay > 28)) {
-        toast.error("Selecione o dia do mês para recorrente");
-        return;
-      }
-      if (!expenseIsRecurring && !expenseDate) {
-        toast.error("Selecione a data da saída única");
-        return;
-      }
-    }
-    console.log("[handleAddExpense] Iniciando inserção de saída...");
-    const { data: userData, error: userError } = await supabase.auth.getUser();
-    if (userError || !userData?.user?.id) {
-      console.error("[handleAddExpense] Erro ao obter usuário:", userError);
-      toast.error("Erro ao obter usuário autenticado");
-      return;
-    }
-    const userId = userData.user.id;
-    console.log("[handleAddExpense] user_id:", userId);
-    const isRecurring = expenseType === "subscription" ? true : expenseIsRecurring;
-    const day = expenseType === "subscription" ? subscriptionBillingDay : (expenseIsRecurring ? expenseDay : null);
-    const date = expenseType === "subscription" ? null : (!expenseIsRecurring ? expenseDate : null);
-    const newExpense = {
-      user_id: userId,
-      description: expenseDescription.trim(),
-      amount: expenseAmount,
-      is_recurring: isRecurring,
-      type: "expense",
-      expense_type: expenseType,
-      date: date,
-      day: day,
-      recurrence_end_date: isRecurring && expenseHasRecurrenceEndDate && expenseRecurrenceEndDate ? expenseRecurrenceEndDate : null,
-      subscription_card: expenseType === "subscription" ? subscriptionCard : null,
-      subscription_billing_day: expenseType === "subscription" ? subscriptionBillingDay : null,
-      subscription_card_due_day: expenseType === "subscription" ? subscriptionCardDueDay : null,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-    console.log("[handleAddExpense] Payload para insert:", newExpense);
-    const { data, error } = await supabase.from('transactions').insert([newExpense]).select();
-    if (error) {
-      console.error("[handleAddExpense] Erro ao salvar transação:", error);
-      toast.error("Erro ao salvar transação");
-    } else {
-      console.log("[handleAddExpense] Transação salva com sucesso:", data);
-      // Atualiza o estado local com o id real do banco
-      if (data && data[0]) {
-        setEvents(prev => [...prev, {
-          ...data[0],
-          isRecurring: data[0].is_recurring,
-          expenseType: data[0].expense_type,
-          subscriptionCard: data[0].subscription_card,
-          subscriptionBillingDay: data[0].subscription_billing_day,
-          subscriptionCardDueDay: data[0].subscription_card_due_day,
-          recurrenceEndDate: data[0].recurrence_end_date,
-        }]);
-      }
-      toast.success("Transação salva!");
-      await fetchTransactions(); // Refresh automático
-      setExpenseDescription("");
-      setExpenseAmount(0);
-      setExpenseDay(1);
-      setExpenseDate(getTodayISO());
-      setExpenseIsRecurring(true);
-      setExpenseType("fixed");
-      setSubscriptionCard("");
-      setSubscriptionBillingDay(1);
-      setSubscriptionCardDueDay(10);
-      setShowExpenseDialog(false);
-    }
-  };
-
-  // Timeline: eventos do período selecionado
-  const recurringEvents = events.filter(e => e.isRecurring).flatMap(event => {
-    // Gera todas as ocorrências dentro do range
-    const occurrences = [];
-    let cursor = new Date(rangeStart);
-    while (cursor <= rangeEnd) {
-      if (event.recurrenceEndDate && new Date(event.recurrenceEndDate) < cursor) break;
-      let dateObj: Date;
-      if (event.expenseType === "subscription" && event.subscriptionBillingDay && event.subscriptionCardDueDay) {
-        const billingDay = event.subscriptionBillingDay;
-        const cardDueDay = event.subscriptionCardDueDay;
-        const year = cursor.getFullYear();
-        const month = cursor.getMonth();
-        if (billingDay > cardDueDay) {
-          dateObj = new Date(year, month + 1, billingDay);
-        } else {
-          dateObj = new Date(year, month, billingDay);
+    // Filtrar transações até a data de projeção
+    const projectionDateObj = new Date(projectionDate);
+    const projectedTransactions = transactions.filter(transaction => {
+      if (transaction.is_recurring) {
+        if (transaction.day) {
+          const transactionDate = new Date(projectionDateObj.getFullYear(), projectionDateObj.getMonth(), transaction.day);
+          return transactionDate <= projectionDateObj;
         }
+        return false;
       } else {
-        dateObj = new Date(cursor.getFullYear(), cursor.getMonth(), event.day!);
-      }
-      if (isWithinInterval(dateObj, { start: rangeStart, end: rangeEnd })) {
-        const occurrenceKey = `${event.id}_${dateObj.toISOString().split("T")[0]}`;
-        if (exceptionDeletes[occurrenceKey]) {
-          cursor = addMonths(cursor, 1);
-          continue;
+        if (transaction.date) {
+          const transactionDate = new Date(transaction.date);
+          return transactionDate <= projectionDateObj;
         }
-        const override = exceptionOverrides[occurrenceKey];
-        if (override) {
-          occurrences.push({
-            ...event,
-            ...override,
-            description: override.override_description || event.description,
-            amount: override.override_amount || event.amount,
-            dateObj,
-            dateStr: dateObj.toISOString().split("T")[0],
-            isException: true,
-            transactionIdOriginal: event.id,
-          });
-        } else {
-          occurrences.push({
-            ...event,
-            dateObj,
-            dateStr: dateObj.toISOString().split("T")[0],
-            isException: false,
-            transactionIdOriginal: event.id,
-          });
-        }
-      }
-      cursor = addMonths(cursor, 1);
-    }
-    return occurrences;
-  });
-
-  const singleEvents = events.filter(e => !e.isRecurring).map(event => ({
-    ...event,
-    dateObj: new Date(event.date!),
-    dateStr: event.date!,
-  }));
-
-  // Só mostra únicas dentro do range
-  const singleEventsInRange = singleEvents.filter(e => isWithinInterval(e.dateObj, { start: rangeStart, end: rangeEnd }));
-
-  // Junta e ordena
-  const allEvents = [...recurringEvents, ...singleEventsInRange];
-  allEvents.sort((a, b) => a.dateObj.getTime() - b.dateObj.getTime());
-
-  // Resumo
-  const totalIncome = allEvents.filter(e => e.type === "income").reduce((sum, e) => sum + e.amount, 0);
-  const totalExpense = allEvents.filter(e => e.type === "expense").reduce((sum, e) => sum + e.amount, 0);
-  const totalFixedExpense = allEvents.filter(e => e.type === "expense" && e.expenseType === "fixed").reduce((sum, e) => sum + e.amount, 0);
-  const totalVariableExpense = allEvents.filter(e => e.type === "expense" && e.expenseType === "variable").reduce((sum, e) => sum + e.amount, 0);
-  const totalSubscriptionExpense = allEvents.filter(e => e.type === "expense" && e.expenseType === "subscription").reduce((sum, e) => sum + e.amount, 0);
-
-  // Novo KPI: performance do mês
-  const monthPerformance = totalIncome - (totalFixedExpense + totalVariableExpense + totalSubscriptionExpense);
-
-  // Cálculo do saldo total das contas
-  const totalAccountBalance = bankAccounts.reduce((sum, account) => sum + account.balance, 0);
-
-  // Novo estado para data de projeção
-  const [projectionDate, setProjectionDate] = useState(() => {
-    const now = new Date();
-    return endOfMonth(now).toISOString().split('T')[0];
-  });
-
-  // Função para calcular saldo projetado até a data de projeção, respeitando a data do saldo de cada conta
-  function calculateProjectedBalance() {
-    // 1. Saldo inicial: soma dos saldos das contas
-    const saldoInicial = bankAccounts.reduce((sum, acc) => sum + acc.balance, 0);
-
-    // 2. Data de referência: maior balance_date das contas (ou hoje se não houver)
-    let saldoData = today;
-    if (bankAccounts.length > 0) {
-      saldoData = bankAccounts.reduce((max, acc) => {
-        if (acc.balance_date && new Date(acc.balance_date) > max) {
-          return new Date(acc.balance_date);
-        }
-        return max;
-      }, new Date(bankAccounts[0].balance_date || today));
-    }
-    const projDate = parseISO(projectionDate);
-
-    // 3. Gera todas as ocorrências de eventos futuras (após saldoData até projDate)
-    const projectedEvents: { type: 'income' | 'expense'; amount: number; date: Date }[] = [];
-    events.forEach(event => {
-      if (event.isRecurring) {
-        let cursor = new Date(saldoData);
-        while (cursor <= projDate) {
-          if (event.recurrenceEndDate && new Date(event.recurrenceEndDate) < cursor) break;
-          let dateObj: Date;
-          if (event.expenseType === "subscription" && event.subscriptionBillingDay && event.subscriptionCardDueDay) {
-            const billingDay = event.subscriptionBillingDay;
-            const cardDueDay = event.subscriptionCardDueDay;
-            const year = cursor.getFullYear();
-            const month = cursor.getMonth();
-            if (billingDay > cardDueDay) {
-              dateObj = new Date(year, month + 1, billingDay);
-            } else {
-              dateObj = new Date(year, month, billingDay);
-            }
-          } else {
-            dateObj = new Date(cursor.getFullYear(), cursor.getMonth(), event.day!);
-          }
-          if (dateObj > saldoData && dateObj <= projDate) {
-            projectedEvents.push({ type: event.type, amount: event.amount, date: dateObj });
-          }
-          cursor = addMonths(cursor, 1);
-        }
-      } else if (event.date) {
-        const dateObj = new Date(event.date);
-        if (dateObj > saldoData && dateObj <= projDate) {
-          projectedEvents.push({ type: event.type, amount: event.amount, date: dateObj });
-        }
+        return false;
       }
     });
 
-    // 4. Soma entradas e saídas
-    const projectedIncomes = projectedEvents.filter(e => e.type === 'income').reduce((sum, e) => sum + e.amount, 0);
-    const projectedExpenses = projectedEvents.filter(e => e.type === 'expense').reduce((sum, e) => sum + e.amount, 0);
+    const projectedIncome = projectedTransactions
+      .filter(t => t.type === 'income')
+      .reduce((sum, t) => sum + t.amount, 0);
+    
+    const projectedExpense = projectedTransactions
+      .filter(t => t.type === 'expense')
+      .reduce((sum, t) => sum + t.amount, 0);
 
-    // 5. Saldo projetado
-    return saldoInicial + projectedIncomes - projectedExpenses;
-  }
-  const projectedBalance = calculateProjectedBalance();
+    return totalAccountBalance + projectedIncome - projectedExpense;
+  })();
 
-  // Função para abrir dialog de edição
-  function handleEdit(event: Entry, occurrenceDate?: string) {
-    console.log('[handleEdit] event:', event, 'occurrenceDate:', occurrenceDate);
-    setEditingEvent(event);
-    setEditingOccurrenceDate(occurrenceDate || null);
-    setEditingMode(null);
-    // Se for recorrente e tem exceção, preencher com override
-    if (event.isRecurring && occurrenceDate) {
-      const key = `${event.id}_${occurrenceDate}`;
-      const override = exceptionOverrides[key];
-      console.log('[handleEdit] override:', override);
-      setEditDescription(override?.override_description || event.description);
-      setEditAmount(override?.override_amount || event.amount);
-    } else {
-      setEditDescription(event.description || "");
-      setEditAmount(event.amount || 0);
-    }
-    setShowEditDialog(true);
-  }
-
-  // Função para abrir dialog de remoção
-  function handleDelete(event: Entry, occurrenceDate?: string) {
-    setEditingEvent(event);
-    setEditingOccurrenceDate(occurrenceDate || null);
-    setEditingMode(null);
-    setShowDeleteDialog(true);
-  }
-
-  // Função para salvar edição
-  async function handleSaveEditTransaction(edited: Partial<Entry>) {
-    if (!editingEvent) return;
-    console.log('[handleSaveEdit] editingEvent:', editingEvent, 'editingMode:', editingMode, 'editingOccurrenceDate:', editingOccurrenceDate, 'edited:', edited);
-    if (editingEvent.isRecurring && editingMode === "single" && editingOccurrenceDate) {
-      // 1. Buscar se já existe exceção para essa ocorrência
-      const { data: existing, error: fetchError } = await supabase
-        .from('recurrence_exceptions')
-        .select('id')
-        .eq('transaction_id', editingEvent.transactionIdOriginal || editingEvent.id)
-        .eq('date', editingOccurrenceDate)
-        .order('created_at', { ascending: false })
-        .maybeSingle();
-      console.log('[handleSaveEdit] existing exception:', existing, 'fetchError:', fetchError);
-      if (existing?.id) {
-        // Já existe: faz update
-        const updatePayload = {
-          action: 'edit',
-          override_amount: edited.amount,
-          override_description: edited.description,
-          override_category: edited.expenseType,
-        };
-        const { error: updateError, data: updateData } = await supabase.from('recurrence_exceptions').update(updatePayload).eq('id', existing.id);
-        console.log('[handleSaveEdit] update exception result:', updateData, 'updateError:', updateError);
-        if (updateError) {
-          toast.error('Erro ao atualizar exceção: ' + updateError.message);
-          return;
-        }
-      } else {
-        // Não existe: faz insert
-        const insertPayload = {
-          transaction_id: editingEvent.transactionIdOriginal || editingEvent.id, // id da transação do banco
-          date: editingOccurrenceDate,
-          action: 'edit',
-          override_amount: edited.amount,
-          override_description: edited.description,
-          override_category: edited.expenseType,
-        };
-        const { error: insertError, data: insertData } = await supabase.from('recurrence_exceptions').insert([insertPayload]);
-        console.log('[handleSaveEdit] insert result:', insertData, 'insertError:', insertError);
-        if (insertError) {
-          toast.error('Erro ao salvar exceção: ' + insertError.message);
-          return;
-        }
+  // Auth check
+  useEffect(() => {
+    const checkAuth = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        router.push('/login');
       }
-    } else if (editingEvent.isRecurring && editingMode === "all") {
-      // Atualiza transação principal
-      const { error: updateError, data: updateData } = await supabase.from('transactions').update(edited).eq('id', editingEvent.transactionIdOriginal || editingEvent.id);
-      console.log('[handleSaveEdit] update all result:', updateData, 'updateError:', updateError);
-      if (updateError) {
-        toast.error('Erro ao atualizar recorrência: ' + updateError.message);
-        return;
-      }
-    } else {
-      // Única
-      const { error: updateError, data: updateData } = await supabase.from('transactions').update(edited).eq('id', editingEvent.transactionIdOriginal || editingEvent.id);
-      console.log('[handleSaveEdit] update single result:', updateData, 'updateError:', updateError);
-      if (updateError) {
-        toast.error('Erro ao atualizar transação: ' + updateError.message);
-        return;
-      }
-    }
-    setShowEditDialog(false);
-    setEditingEvent(null);
-    setEditingOccurrenceDate(null);
-    setEditingMode(null);
-    await fetchTransactions();
-    await fetchRecurrenceExceptions();
-  }
+    };
+    checkAuth();
+  }, [router]);
 
-  // Função para remover
-  async function handleConfirmDelete() {
-    if (!editingEvent) return;
-    if (editingEvent.isRecurring && editingMode === "single" && editingOccurrenceDate) {
-      // Cria exceção de delete para esta ocorrência
-      await supabase.from('recurrence_exceptions').upsert([{
-        transaction_id: editingEvent.transactionIdOriginal || editingEvent.id,
-        date: editingOccurrenceDate,
-        action: 'delete',
-      }], { onConflict: 'transaction_id,date' });
-    } else if (editingEvent.isRecurring && editingMode === "all") {
-      // Remove transação principal
-      await supabase.from('transactions').delete().eq('id', editingEvent.transactionIdOriginal || editingEvent.id);
-    } else {
-      // Única
-      await supabase.from('transactions').delete().eq('id', editingEvent.transactionIdOriginal || editingEvent.id);
-    }
-    setShowDeleteDialog(false);
-    setEditingEvent(null);
-    setEditingOccurrenceDate(null);
-    setEditingMode(null);
-    await fetchTransactions();
-    await fetchRecurrenceExceptions();
-  }
-
-  const handleLogout = async () => {
-    const { error } = await supabase.auth.signOut();
-    if (error) {
-      toast.error("Erro ao fazer logout");
-    } else {
-      toast.success("Logout realizado com sucesso");
-      router.push("/login");
+  // Handlers
+  const handleAddIncome = async (data: any) => {
+    try {
+      await addTransaction(data);
+      setShowIncomeDialog(false);
+    } catch (error) {
+      console.error('Error adding income:', error);
     }
   };
 
-  // 1. Adicionar estados para edição de conta e novo saldo
-  const [editingAccountId, setEditingAccountId] = useState<string | null>(null);
-  const [editBalance, setEditBalance] = useState<number | null>(null);
-  const [editBalanceDate, setEditBalanceDate] = useState<string>("");
-  const [savingEdit, setSavingEdit] = useState(false);
-  const [showAddAccountDialog, setShowAddAccountDialog] = useState(false);
-  const [newAccount, setNewAccount] = useState<Partial<BankAccount>>({
-    name: '',
-    bank: '',
-    account_type: 'checking',
-    balance: 0,
-    balance_date: new Date().toISOString().split('T')[0]
-  });
-
-  // 2. Função para iniciar edição
-  function startEdit(account: BankAccount) {
-    setEditingAccountId(account.id);
-    setEditBalance(account.balance);
-    setEditBalanceDate(account.balance_date || new Date().toISOString().split('T')[0]);
-  }
-
-  // 3. Função para salvar edição
-  async function handleSaveEdit(accountId: string) {
-    setSavingEdit(true);
+  const handleAddExpense = async (data: any) => {
     try {
-      const todayStr = new Date().toISOString().split('T')[0];
-      const updated = await updateBankAccount(accountId, {
-        balance: editBalance ?? 0,
-        balance_date: todayStr
-      });
-      setBankAccounts(prev => prev.map(acc => acc.id === updated.id ? updated : acc));
-      setEditingAccountId(null);
-      toast.success('Saldo atualizado!');
-    } catch (err: any) {
-      toast.error(err.message || 'Erro ao atualizar saldo');
-    } finally {
-      setSavingEdit(false);
+      await addTransaction(data);
+      setShowExpenseDialog(false);
+    } catch (error) {
+      console.error('Error adding expense:', error);
     }
-  }
+  };
 
-  // 4. Função para adicionar nova conta
-  async function handleAddAccountDialog() {
-    setSavingEdit(true);
+  const handleEdit = (event: any, occurrenceDate?: string) => {
+    setEditingEvent({ ...event, occurrenceDate });
+    setShowEditDialog(true);
+  };
+
+  const handleDelete = (event: any, occurrenceDate?: string) => {
+    setEditingEvent({ ...event, occurrenceDate });
+    setShowDeleteDialog(true);
+  };
+
+  const handleSaveEdit = async (data: any, mode: 'single' | 'all') => {
+    if (!editingEvent) return;
+
     try {
-      const todayStr = new Date().toISOString().split('T')[0];
-      const created = await createBankAccount({
-        name: newAccount.name!,
-        bank: newAccount.bank!,
-        account_type: newAccount.account_type as 'checking' | 'savings',
-        balance: Number(newAccount.balance),
-        balance_date: todayStr
-      });
-      setBankAccounts(prev => [...prev, created]);
-      setShowAddAccountDialog(false);
-      setNewAccount({ name: '', bank: '', account_type: 'checking', balance: 0 });
-      toast.success('Conta adicionada!');
-    } catch (err: any) {
-      toast.error(err.message || 'Erro ao adicionar conta');
-    } finally {
-      setSavingEdit(false);
+      if (mode === 'single' && editingEvent.occurrenceDate) {
+        // Create recurrence exception
+        await updateRecurrenceException(
+          editingEvent.transactionIdOriginal,
+          editingEvent.occurrenceDate,
+          data
+        );
+      } else {
+        // Update the entire transaction
+        await updateTransaction(editingEvent.transactionIdOriginal, data);
+      }
+      setShowEditDialog(false);
+      setEditingEvent(null);
+    } catch (error) {
+      console.error('Error updating transaction:', error);
     }
-  }
+  };
+
+  const handleConfirmDelete = async (mode: 'single' | 'all') => {
+    if (!editingEvent) return;
+
+    try {
+      if (mode === 'single' && editingEvent.occurrenceDate) {
+        // Create recurrence exception for deletion
+        await deleteRecurrenceException(
+          editingEvent.transactionIdOriginal,
+          editingEvent.occurrenceDate
+        );
+      } else {
+        // Delete the entire transaction
+        await deleteTransaction(editingEvent.transactionIdOriginal);
+      }
+      setShowDeleteDialog(false);
+      setEditingEvent(null);
+    } catch (error) {
+      console.error('Error deleting transaction:', error);
+    }
+  };
+
+  const handleLogout = () => {
+    // This will be handled by the PageHeader component
+  };
+
+  // Handlers para contas bancárias
+  const handleAddAccount = async (data: any) => {
+    try {
+      await addAccount(data);
+    } catch (error) {
+      console.error('Error adding account:', error);
+    }
+  };
+
+  const handleUpdateAccount = async (id: string, data: any) => {
+    try {
+      await updateAccount(id, data);
+    } catch (error) {
+      console.error('Error updating account:', error);
+    }
+  };
+
+  const handleDeleteAccount = async (id: string) => {
+    try {
+      await deleteAccount(id);
+    } catch (error) {
+      console.error('Error deleting account:', error);
+    }
+  };
+
+  const loading = userLoading || transactionsLoading || kpisLoading || timelineLoading;
 
   return (
-    <div className="min-h-screen bg-background pt-16 sm:pt-0">
-      <div className="w-full max-w-7xl mx-auto px-2 sm:px-4 lg:px-8">
-        {/* Header */}
-        <div className="mb-8 flex items-center justify-between gap-4 flex-wrap">
-          <div>
-            <h1 className="text-3xl font-bold text-foreground mb-2">
-              Timeline de Eventos
-            </h1>
-            <p className="text-muted-foreground">
-              Acompanhe suas entradas e saídas recorrentes
-            </p>
-          </div>
-          <div className="flex items-center gap-4 ml-auto">
-            <div className="flex items-center gap-2">
-              <Select value={period} onValueChange={v => setPeriod(v as any)}>
-                <SelectTrigger className="w-44">
-                  <SelectValue placeholder="Período" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="current">Mês atual</SelectItem>
-                  <SelectItem value="next">Próximo mês</SelectItem>
-                  <SelectItem value="3months">Próximos 3 meses</SelectItem>
-                  <SelectItem value="custom">Personalizado</SelectItem>
-                </SelectContent>
-              </Select>
-              {period === "custom" && (
-                <>
-                  <Input type="date" value={customStart} onChange={e => setCustomStart(e.target.value)} className="w-32" />
-                  <span className="mx-1">até</span>
-                  <Input type="date" value={customEnd} onChange={e => setCustomEnd(e.target.value)} className="w-32" />
-                </>
-              )}
-            </div>
-            {/* Botões de adicionar */}
-            <div className="flex gap-2">
-              <Dialog open={showEntryDialog} onOpenChange={setShowEntryDialog}>
+    <div className="min-h-screen bg-background">
+      <PageHeader 
+        user={user} 
+        userLoading={userLoading} 
+        onLogout={handleLogout} 
+      />
+      
+      <div className="container mx-auto p-4 space-y-6">
+        {/* Period Filter */}
+        <PeriodFilterComponent
+          period={period}
+          onPeriodChange={setPeriod}
+          customStart={customStart}
+          onCustomStartChange={setCustomStart}
+          customEnd={customEnd}
+          onCustomEndChange={setCustomEnd}
+        />
 
-                <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-hidden flex flex-col">
-                  <DialogHeader className="flex-shrink-0">
-                    <DialogTitle>Nova Entrada</DialogTitle>
-                  </DialogHeader>
-                  <div className="flex-1 overflow-y-auto pr-2">
-                    <form onSubmit={handleAddEntry} className="space-y-4">
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div>
-                          <label className="block mb-1 font-medium">Descrição</label>
-                          <Input
-                            value={entryDescription}
-                            onChange={e => setEntryDescription(e.target.value)}
-                            placeholder="Ex: Salário, Projeto X, etc"
-                            required
-                          />
-                        </div>
-                        <div>
-                          <label className="block mb-1 font-medium">Valor (R$)</label>
-                          <Input
-                            type="number"
-                            min={0}
-                            step={0.01}
-                            value={entryAmount}
-                            onChange={e => setEntryAmount(Number(e.target.value))}
-                            placeholder="Ex: 3500.00"
-                            required
-                          />
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div>
-                          <label className="block mb-1 font-medium">Tipo de entrada</label>
-                          <Select value={entryIsRecurring ? "recorrente" : "unica"} onValueChange={v => setEntryIsRecurring(v === "recorrente")}> 
-                            <SelectTrigger>
-                              <SelectValue placeholder="Selecione o tipo" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="recorrente">Recorrente</SelectItem>
-                              <SelectItem value="unica">Única</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        {entryIsRecurring ? (
-                          <>
-                            <div>
-                              <label className="block mb-1 font-medium">Dia do mês</label>
-                              <Select value={entryDay.toString()} onValueChange={v => setEntryDay(Number(v))}>
-                                <SelectTrigger>
-                                  <SelectValue placeholder="Selecione o dia" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {Array.from({ length: 28 }, (_, i) => i + 1).map(day => (
-                                    <SelectItem key={day} value={day.toString()}>
-                                      Dia {day}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            </div>
-                            <div className="flex items-center gap-2 mt-2">
-                              <Switch checked={entryHasRecurrenceEndDate} onCheckedChange={setEntryHasRecurrenceEndDate} id="hasRecurrenceEndDate" />
-                              <label htmlFor="hasRecurrenceEndDate" className="text-sm">Tem data fim?</label>
-                              {entryHasRecurrenceEndDate && (
-                                <Input
-                                  type="date"
-                                  value={entryRecurrenceEndDate}
-                                  onChange={e => setEntryRecurrenceEndDate(e.target.value)}
-                                  min={getTodayISO()}
-                                  className="w-40"
-                                />
-                              )}
-                            </div>
-                          </>
-                        ) : (
-                          <div>
-                            <label className="block mb-1 font-medium">Data da entrada</label>
-                            <Input
-                              type="date"
-                              value={entryDate}
-                              onChange={e => setEntryDate(e.target.value)}
-                              required
-                            />
-                          </div>
-                        )}
-                      </div>
-                    </form>
-                  </div>
-                  <div className="flex gap-2 justify-end pt-4 border-t flex-shrink-0">
-                    <Button type="button" variant="outline" onClick={() => setShowEntryDialog(false)}>
-                      Cancelar
-                    </Button>
-                    <Button type="submit" className="bg-lime-500 hover:bg-lime-600" onClick={handleAddEntry}>
-                      Salvar
-                    </Button>
-                  </div>
-                </DialogContent>
-              </Dialog>
-              <Dialog open={showExpenseDialog} onOpenChange={setShowExpenseDialog}>
-    
-                <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-hidden flex flex-col">
-                  <DialogHeader className="flex-shrink-0">
-                    <DialogTitle>Nova Saída</DialogTitle>
-                  </DialogHeader>
-                  <div className="flex-1 overflow-y-auto pr-2">
-                    <form onSubmit={handleAddExpense} className="space-y-4">
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div>
-                          <label className="block mb-1 font-medium">Descrição</label>
-                          <Input
-                            value={expenseDescription}
-                            onChange={e => setExpenseDescription(e.target.value)}
-                            placeholder="Ex: Aluguel, Energia, etc"
-                            required
-                          />
-                        </div>
-                        <div>
-                          <label className="block mb-1 font-medium">Valor (R$)</label>
-                          <Input
-                            type="number"
-                            min={0}
-                            step={0.01}
-                            value={expenseAmount}
-                            onChange={e => setExpenseAmount(Number(e.target.value))}
-                            placeholder="Ex: 1200.00"
-                            required
-                          />
-                        </div>
-                      </div>
-                      
-                      <div>
-                        <label className="block mb-1 font-medium">Tipo de despesa</label>
-                        <Select value={expenseType} onValueChange={v => setExpenseType(v as "fixed" | "variable" | "subscription")}> 
-                          <SelectTrigger>
-                            <SelectValue placeholder="Selecione o tipo" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="fixed">Fixa</SelectItem>
-                            <SelectItem value="variable">Variável</SelectItem>
-                            <SelectItem value="subscription">Assinatura</SelectItem>
-                          </SelectContent>
-                        </Select>
-                        <div className="mt-2 p-3 bg-muted rounded-lg">
-                          <div className="text-sm">
-                            <div className="font-medium mb-1">Diferença entre os tipos:</div>
-                            <div className="space-y-1 text-muted-foreground">
-                              <div><strong>Fixa:</strong> Valor constante (aluguel, energia, internet)</div>
-                              <div><strong>Variável:</strong> Valor que pode mudar (combustível, lazer, vestuário)</div>
-                              <div><strong>Assinatura:</strong> Cobrança recorrente em cartão (Netflix, Spotify, etc)</div>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
+        {/* KPI Grid */}
+        <KPIGrid
+          kpis={kpis}
+          onKPIClick={setOpenKpiDialog}
+          loading={loading}
+        />
 
-                      {/* Campos específicos para assinatura */}
-                      {expenseType === "subscription" && (
-                        <div className="space-y-4 p-4 border border-muted rounded-lg">
-                          <h4 className="font-medium">Configuração da Assinatura</h4>
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                            <div>
-                              <label className="block mb-1 font-medium text-sm">Cartão da assinatura</label>
-                              <Select value={subscriptionCard} onValueChange={setSubscriptionCard}>
-                                <SelectTrigger>
-                                  <SelectValue placeholder="Selecione o cartão" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {creditCards.map(card => (
-                                    <SelectItem key={card.id} value={card.id}>
-                                      {card.name}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            </div>
-                            <div>
-                              <label className="block mb-1 font-medium text-sm">Data de cobrança</label>
-                              <Select value={subscriptionBillingDay.toString()} onValueChange={v => setSubscriptionBillingDay(Number(v))}>
-                                <SelectTrigger>
-                                  <SelectValue placeholder="Selecione o dia" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {Array.from({ length: 28 }, (_, i) => i + 1).map(day => (
-                                    <SelectItem key={day} value={day.toString()}>
-                                      Dia {day}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            </div>
-                          </div>
-                          <div>
-                            <label className="block mb-1 font-medium text-sm">Vencimento do cartão</label>
-                            <Select value={subscriptionCardDueDay.toString()} onValueChange={v => setSubscriptionCardDueDay(Number(v))}>
-                              <SelectTrigger>
-                                <SelectValue placeholder="Selecione o dia" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {Array.from({ length: 28 }, (_, i) => i + 1).map(day => (
-                                  <SelectItem key={day} value={day.toString()}>
-                                    Dia {day}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </div>
-                        </div>
-                      )}
+        {/* Timeline */}
+        <Timeline
+          events={timelineEvents}
+          groupedEvents={groupedEvents}
+          creditCards={creditCardsArray}
+          loading={loading}
+          onEdit={handleEdit}
+          onDelete={handleDelete}
+        />
 
-                      {/* Tipo de saída e dia/data só aparecem se NÃO for assinatura */}
-                      {expenseType !== "subscription" && (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                          <div>
-                            <label className="block mb-1 font-medium">Tipo de saída</label>
-                            <Select value={expenseIsRecurring ? "recorrente" : "unica"} onValueChange={v => setExpenseIsRecurring(v === "recorrente")}> 
-                              <SelectTrigger>
-                                <SelectValue placeholder="Selecione o tipo" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="recorrente">Recorrente</SelectItem>
-                                <SelectItem value="unica">Única</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
-                          {expenseIsRecurring ? (
-                            <div>
-                              <label className="block mb-1 font-medium">Dia do mês</label>
-                              <Select value={expenseDay.toString()} onValueChange={v => setExpenseDay(Number(v))}>
-                                <SelectTrigger>
-                                  <SelectValue placeholder="Selecione o dia" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {Array.from({ length: 28 }, (_, i) => i + 1).map(day => (
-                                    <SelectItem key={day} value={day.toString()}>
-                                      Dia {day}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            </div>
-                          ) : (
-                            <div>
-                              <label className="block mb-1 font-medium">Data da saída</label>
-                              <Input
-                                type="date"
-                                value={expenseDate}
-                                onChange={e => setExpenseDate(e.target.value)}
-                                required
-                              />
-                            </div>
-                          )}
-                        </div>
-                      )}
-                      {expenseType !== "subscription" && expenseIsRecurring ? (
-                        <div className="flex items-center gap-2 mt-2">
-                          <Switch checked={expenseHasRecurrenceEndDate} onCheckedChange={setExpenseHasRecurrenceEndDate} id="expenseHasRecurrenceEndDate" />
-                          <label htmlFor="expenseHasRecurrenceEndDate" className="text-sm">Tem data fim?</label>
-                          {expenseHasRecurrenceEndDate && (
-                            <Input
-                              type="date"
-                              value={expenseRecurrenceEndDate}
-                              onChange={e => setExpenseRecurrenceEndDate(e.target.value)}
-                              min={getTodayISO()}
-                              className="w-40"
-                            />
-                          )}
-                        </div>
-                      ) : null}
-                    </form>
-                  </div>
-                  <div className="flex gap-2 justify-end pt-4 border-t flex-shrink-0">
-                    <Button type="button" variant="outline" onClick={() => setShowExpenseDialog(false)}>
-                      Cancelar
-                    </Button>
-                    <Button type="submit" className="bg-red-500 hover:bg-red-600" onClick={handleAddExpense}>
-                      Salvar
-                    </Button>
-                  </div>
-                </DialogContent>
-              </Dialog>
-            </div>
-            {/* Avatar e menu do usuário */}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <div className="ml-2 cursor-pointer">
-                  <Avatar>
-                    <AvatarImage src={user?.user_metadata?.avatar_url || undefined} alt={user?.email || "avatar"} />
-                    <AvatarFallback>
-                      {user?.email ? user.email[0].toUpperCase() : <User2 className="w-5 h-5" />}
-                    </AvatarFallback>
-                  </Avatar>
-                </div>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-64">
-                <DropdownMenuLabel>
-                  {user?.user_metadata?.full_name || user?.email || "Usuário"}
-                </DropdownMenuLabel>
-                <div className="px-3 pb-1 text-xs text-muted-foreground">
-                  {user?.created_at && (
-                    <>Membro desde {formatDateFriendly(user.created_at || '')}</>
-                  )}
-                </div>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => router.push('/ajustes')}>
-                  <Settings className="w-4 h-4 mr-2" /> Ajustes do Usuário
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={handleLogout} className="text-red-600 ">
-                  <LogOut className="w-4 h-4 mr-2" /> Sair
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        </div>
+        {/* Dialogs */}
+        <TransactionDialog
+          open={showIncomeDialog}
+          onOpenChange={setShowIncomeDialog}
+          type="income"
+          onSubmit={handleAddIncome}
+          loading={transactionsLoading}
+        />
 
-        {/* KPIs - responsivo: 1/2/3 por linha */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-12">
-          {(userLoading || (
-            totalIncome === 0 &&
-            totalExpense === 0 &&
-            totalFixedExpense === 0 &&
-            totalVariableExpense === 0 &&
-            totalSubscriptionExpense === 0 &&
-            totalAccountBalance === 0 &&
-            monthPerformance === 0 &&
-            projectedBalance === 0
-          )) ? (
-            Array.from({ length: 8 }).map((_, i) => (
-              <Card key={i}>
-                <CardHeader className="pb-3">
-                  <Skeleton className="h-5 w-24" />
-                </CardHeader>
-                <CardContent>
-                  <Skeleton className="h-8 w-32 mb-2" />
-                  <Skeleton className="h-4 w-48" />
-                </CardContent>
-              </Card>
-            ))
-          ) : (
-            <>
-              <Card onClick={() => setOpenKpiDialog("income")} className="cursor-pointer hover:ring-2 hover:ring-lime-400 transition">
-                <CardHeader className="pb-3">
-                  <div className="flex items-center gap-2">
-                    <TrendingUp className="w-5 h-5 text-lime-500" />
-                    <CardTitle className="text-lg">Entradas</CardTitle>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold text-foreground">
-                    {new Intl.NumberFormat("pt-BR", {
-                      style: "currency",
-                      currency: "BRL",
-                    }).format(totalIncome)}
-                  </div>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    {allEvents.filter(e => e.type === "income").length === 0 ? "Nenhuma entrada no período" : `${allEvents.filter(e => e.type === "income").length} entrada(s) no período`}
-                  </p>
-                </CardContent>
-              </Card>
-              <Card onClick={() => setOpenKpiDialog("expense")} className="cursor-pointer hover:ring-2 hover:ring-red-400 transition">
-                <CardHeader className="pb-3">
-                  <div className="flex items-center gap-2">
-                    <TrendingDown className="w-5 h-5 text-red-500" />
-                    <CardTitle className="text-lg">Saídas</CardTitle>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold text-foreground">
-                    {new Intl.NumberFormat("pt-BR", {
-                      style: "currency",
-                      currency: "BRL",
-                    }).format(totalExpense)}
-                  </div>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    {allEvents.filter(e => e.type === "expense").length === 0 ? "Nenhuma saída no período" : `${allEvents.filter(e => e.type === "expense").length} saída(s) no período`}
-                  </p>
-                </CardContent>
-              </Card>
-              <Card onClick={() => setOpenKpiDialog("fixed")} className="cursor-pointer hover:ring-2 hover:ring-orange-400 transition">
-                <CardHeader className="pb-3">
-                  <div className="flex items-center gap-2">
-                    <AlertCircle className="w-5 h-5 text-orange-500" />
-                    <CardTitle className="text-lg">Fixas</CardTitle>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold text-foreground">
-                    {new Intl.NumberFormat("pt-BR", {
-                      style: "currency",
-                      currency: "BRL",
-                    }).format(totalFixedExpense)}
-                  </div>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    {allEvents.filter(e => e.type === "expense" && e.expenseType === "fixed").length === 0 ? "Nenhuma despesa fixa no período" : `${allEvents.filter(e => e.type === "expense" && e.expenseType === "fixed").length} despesa(s) fixa(s) no período`}
-                  </p>
-                </CardContent>
-              </Card>
-              <Card onClick={() => setOpenKpiDialog("variable")} className="cursor-pointer hover:ring-2 hover:ring-purple-400 transition">
-                <CardHeader className="pb-3">
-                  <div className="flex items-center gap-2">
-                    <AlertCircle className="w-5 h-5 text-purple-500" />
-                    <CardTitle className="text-lg">Variáveis</CardTitle>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold text-foreground">
-                    {new Intl.NumberFormat("pt-BR", {
-                      style: "currency",
-                      currency: "BRL",
-                    }).format(totalVariableExpense)}
-                  </div>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    {allEvents.filter(e => e.type === "expense" && e.expenseType === "variable").length === 0 ? "Nenhuma despesa variável no período" : `${allEvents.filter(e => e.type === "expense" && e.expenseType === "variable").length} despesa(s) variável(is) no período`}
-                  </p>
-                </CardContent>
-              </Card>
-              <Card onClick={() => setOpenKpiDialog("subscription")} className="cursor-pointer hover:ring-2 hover:ring-blue-400 transition">
-                <CardHeader className="pb-3">
-                  <div className="flex items-center gap-2">
-                    <CreditCard className="w-5 h-5 text-blue-500" />
-                    <CardTitle className="text-lg">Assinaturas</CardTitle>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold text-foreground">
-                    {new Intl.NumberFormat("pt-BR", {
-                      style: "currency",
-                      currency: "BRL",
-                    }).format(totalSubscriptionExpense)}
-                  </div>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    {allEvents.filter(e => e.type === "expense" && e.expenseType === "subscription").length === 0 ? "Nenhuma assinatura no período" : `${allEvents.filter(e => e.type === "expense" && e.expenseType === "subscription").length} assinatura(s) no período`}
-                  </p>
-                </CardContent>
-              </Card>
-              {/* KPI Performance do mês */}
-              <Card onClick={() => setOpenKpiDialog("performance")} className="cursor-pointer hover:ring-2 hover:ring-lime-600 transition">
-                <CardHeader className="pb-3">
-                  <div className="flex items-center gap-2">
-                    <span className="inline-block w-5 h-5 rounded-full flex items-center justify-center" style={{ background: monthPerformance > 0 ? '#22c55e' : monthPerformance < 0 ? '#ef4444' : '#64748b' }}>
-                      <span className="text-white font-bold">{monthPerformance > 0 ? '+' : monthPerformance < 0 ? '-' : '='}</span>
-                    </span>
-                    <CardTitle className="text-lg">Performance do Mês</CardTitle>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <div className={`text-2xl font-bold ${monthPerformance > 0 ? 'text-lime-500' : monthPerformance < 0 ? 'text-red-500' : 'text-muted-foreground'}`}>
-                    {new Intl.NumberFormat("pt-BR", {
-                      style: "currency",
-                      currency: "BRL",
-                    }).format(monthPerformance)}
-                  </div>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    {monthPerformance > 0 ? "Saldo positivo no período" : monthPerformance < 0 ? "Saldo negativo no período" : "Equilíbrio no período"}
-                  </p>
-                </CardContent>
-              </Card>
-              {/* KPI Saldo das Contas */}
-              <Card onClick={() => setOpenKpiDialog("balance")} className="cursor-pointer hover:ring-2 hover:ring-blue-400 transition">
-                <CardHeader className="pb-3">
-                  <div className="flex items-center gap-2">
-                    <Building2 className="w-5 h-5 text-blue-500" />
-                    <CardTitle className="text-lg">Saldo das Contas</CardTitle>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold text-foreground">
-                    {new Intl.NumberFormat("pt-BR", {
-                      style: "currency",
-                      currency: "BRL",
-                    }).format(totalAccountBalance)}
-                  </div>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    {bankAccounts.length === 0 ? "Nenhuma conta configurada" : `${bankAccounts.length} conta(s) configurada(s)`}
-                  </p>
-                </CardContent>
-              </Card>
-              {/* KPI Saldo Projetado */}
-              <Card onClick={() => setOpenKpiDialog("projected")} className="cursor-pointer hover:ring-2 hover:ring-blue-400 transition">
-                <CardHeader className="pb-3">
-                  <div className="flex items-center gap-2">
-                    <Building2 className="w-5 h-5 text-blue-500" />
-                    <CardTitle className="text-lg">Saldo Projetado</CardTitle>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold text-foreground">
-                    {new Intl.NumberFormat("pt-BR", {
-                      style: "currency",
-                      currency: "BRL",
-                    }).format(projectedBalance)}
-                  </div>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    Até {formatDateFriendly(projectionDate)}
-                  </p>
-                </CardContent>
-              </Card>
-            </>
-          )}
-        </div>
+        <TransactionDialog
+          open={showExpenseDialog}
+          onOpenChange={setShowExpenseDialog}
+          type="expense"
+          onSubmit={handleAddExpense}
+          loading={transactionsLoading}
+        />
 
-        {/* Dialogs de detalhes dos KPIs */}
-        <Dialog open={openKpiDialog === "income"} onOpenChange={v => setOpenKpiDialog(v ? "income" : null)}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Detalhes das Entradas</DialogTitle>
-            </DialogHeader>
-            <div className="mb-2 text-sm text-muted-foreground">Soma de todas as entradas do mês.</div>
-            <ul className="space-y-1">
-              {allEvents.filter(e => e.type === "income").length === 0 ? (
-                <li className="text-muted-foreground">Nenhuma entrada cadastrada</li>
-              ) : (
-                allEvents.filter(e => e.type === "income").map(e => (
-                  <li key={e.id}>
-                    <span className="font-medium">{e.description}</span>: R$ {e.amount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
-                  </li>
-                ))
-              )}
-            </ul>
-          </DialogContent>
-        </Dialog>
-        <Dialog open={openKpiDialog === "expense"} onOpenChange={v => setOpenKpiDialog(v ? "expense" : null)}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Detalhes das Saídas</DialogTitle>
-            </DialogHeader>
-            <div className="mb-2 text-sm text-muted-foreground">Soma de todas as saídas do mês (fixas, variáveis e assinaturas).</div>
-            <ul className="space-y-1">
-              {allEvents.filter(e => e.type === "expense").length === 0 ? (
-                <li className="text-muted-foreground">Nenhuma saída cadastrada</li>
-              ) : (
-                allEvents.filter(e => e.type === "expense").map(e => (
-                  <li key={e.id}>
-                    <span className="font-medium">{e.description}</span>: R$ {e.amount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })} <span className="text-xs text-muted-foreground">({e.expenseType === "fixed" ? "Fixa" : e.expenseType === "variable" ? "Variável" : "Assinatura"})</span>
-                  </li>
-                ))
-              )}
-            </ul>
-          </DialogContent>
-        </Dialog>
-        <Dialog open={openKpiDialog === "fixed"} onOpenChange={v => setOpenKpiDialog(v ? "fixed" : null)}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Detalhes das Despesas Fixas</DialogTitle>
-            </DialogHeader>
-            <div className="mb-2 text-sm text-muted-foreground">Soma de todas as despesas fixas do mês.</div>
-            <ul className="space-y-1">
-              {allEvents.filter(e => e.type === "expense" && e.expenseType === "fixed").length === 0 ? (
-                <li className="text-muted-foreground">Nenhuma despesa fixa cadastrada</li>
-              ) : (
-                allEvents.filter(e => e.type === "expense" && e.expenseType === "fixed").map(e => (
-                  <li key={e.id}>
-                    <span className="font-medium">{e.description}</span>: R$ {e.amount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
-                  </li>
-                ))
-              )}
-            </ul>
-          </DialogContent>
-        </Dialog>
-        <Dialog open={openKpiDialog === "variable"} onOpenChange={v => setOpenKpiDialog(v ? "variable" : null)}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Detalhes das Despesas Variáveis</DialogTitle>
-            </DialogHeader>
-            <div className="mb-2 text-sm text-muted-foreground">Soma de todas as despesas variáveis do mês.</div>
-            <ul className="space-y-1">
-              {allEvents.filter(e => e.type === "expense" && e.expenseType === "variable").length === 0 ? (
-                <li className="text-muted-foreground">Nenhuma despesa variável cadastrada</li>
-              ) : (
-                allEvents.filter(e => e.type === "expense" && e.expenseType === "variable").map(e => (
-                  <li key={e.id}>
-                    <span className="font-medium">{e.description}</span>: R$ {e.amount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
-                  </li>
-                ))
-              )}
-            </ul>
-          </DialogContent>
-        </Dialog>
-        <Dialog open={openKpiDialog === "subscription"} onOpenChange={v => setOpenKpiDialog(v ? "subscription" : null)}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Detalhes das Assinaturas</DialogTitle>
-            </DialogHeader>
-            <div className="mb-2 text-sm text-muted-foreground">Soma de todas as assinaturas do mês.</div>
-            <ul className="space-y-1">
-              {allEvents.filter(e => e.type === "expense" && e.expenseType === "subscription").length === 0 ? (
-                <li className="text-muted-foreground">Nenhuma assinatura cadastrada</li>
-              ) : (
-                allEvents.filter(e => e.type === "expense" && e.expenseType === "subscription").map(e => (
-                  <li key={e.id}>
-                    <span className="font-medium">{e.description}</span>: R$ {e.amount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })} <span className="text-xs text-muted-foreground">({creditCards.find(c => c.id === e.subscriptionCard)?.name || "Cartão"})</span>
-                  </li>
-                ))
-              )}
-            </ul>
-          </DialogContent>
-        </Dialog>
-        <Dialog open={openKpiDialog === "performance"} onOpenChange={v => setOpenKpiDialog(v ? "performance" : null)}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Detalhes da Performance do Mês</DialogTitle>
-            </DialogHeader>
-            <div className="mb-2 text-sm text-muted-foreground">
-              Performance = Entradas - (Fixas + Variáveis + Assinaturas)
-            </div>
-            <ul className="mb-2">
-              <li>Entradas: <span className="font-medium">R$ {totalIncome.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span></li>
-              <li>Fixas: <span className="font-medium">R$ {totalFixedExpense.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span></li>
-              <li>Variáveis: <span className="font-medium">R$ {totalVariableExpense.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span></li>
-              <li>Assinaturas: <span className="font-medium">R$ {totalSubscriptionExpense.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span></li>
-            </ul>
-            <div className="font-bold">
-              Resultado: R$ {monthPerformance.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
-            </div>
-          </DialogContent>
-        </Dialog>
-        <Dialog open={openKpiDialog === "balance"} onOpenChange={v => setOpenKpiDialog(v ? "balance" : null)}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Detalhes do Saldo das Contas</DialogTitle>
-            </DialogHeader>
-            <div className="mb-2 text-sm text-muted-foreground">
-              Saldo total de todas as suas contas bancárias
-            </div>
-            {bankAccounts.length === 0 ? (
-              <div className="text-center py-4">
-                <Building2 className="w-12 h-12 text-muted-foreground mx-auto mb-2" />
-                <p className="text-muted-foreground">Nenhuma conta configurada</p>
-                <p className="text-sm text-muted-foreground mt-1">
-                  Configure suas contas em Ajustes → Contas Bancárias
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {bankAccounts.map(account => (
-                  <div key={account.id} className="flex items-center justify-between p-3 border rounded-lg">
-                    <div>
-                      <div className="font-medium">{account.name}</div>
-                      <div className="text-sm text-muted-foreground">
-                        {getBankName(account.bank)} • {getAccountTypeName(account.account_type)}
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        Última atualização: {formatDateFriendly(account.balance_date || '')}
-                      </div>
-                    </div>
-                    <div className="text-right flex items-center gap-2">
-                      {editingAccountId === account.id ? (
-                        <>
-                          <Input
-                            type="number"
-                            value={editBalance ?? ''}
-                            onChange={e => setEditBalance(Number(e.target.value))}
-                            className="w-24"
-                            autoFocus
-                          />
-                          <Button size="sm" onClick={() => handleSaveEdit(account.id)} disabled={savingEdit}>
-                            Salvar
-                          </Button>
-                          <Button size="sm" variant="outline" onClick={() => setEditingAccountId(null)} disabled={savingEdit}>
-                            Cancelar
-                          </Button>
-                        </>
-                      ) : (
-                        <>
-                          <span className="font-semibold">
-                            {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(account.balance)}
-                          </span>
-                          <Button variant="ghost" size="icon" onClick={() => startEdit(account)}>
-                            <Pencil className="w-4 h-4" />
-                          </Button>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                ))}
-                <div className="border-t pt-3 mt-3">
-                  <div className="flex items-center justify-between font-bold">
-                    <span>Total:</span>
-                    <span>
-                      {new Intl.NumberFormat("pt-BR", {
-                        style: "currency",
-                        currency: "BRL",
-                      }).format(totalAccountBalance)}
-                    </span>
-                  </div>
-                </div>
-                {/* Botão para adicionar nova conta */}
-                {!showAddAccountDialog && (
-                  <Button onClick={() => setShowAddAccountDialog(true)} className="w-full mt-4">
-                    <Plus className="w-4 h-4 mr-2" />
-                    Adicionar Nova Conta
-                  </Button>
-                )}
-                {showAddAccountDialog && (
-                  <div className="border rounded-lg p-4 space-y-4 mt-4">
-                    <h4 className="font-medium">Nova conta:</h4>
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      <div>
-                        <label className="block mb-1 font-medium">Nome da conta</label>
-                        <Input
-                          value={newAccount.name}
-                          onChange={e => setNewAccount(prev => ({ ...prev, name: e.target.value }))}
-                          placeholder="Ex: Conta Principal"
-                          autoFocus
-                        />
-                      </div>
-                      <div>
-                        <label className="block mb-1 font-medium">Banco</label>
-                        <Select 
-                          value={newAccount.bank} 
-                          onValueChange={(value) => setNewAccount(prev => ({ ...prev, bank: value }))}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Selecione o banco" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {creditCards.map(bank => (
-                              <SelectItem key={bank.id} value={bank.id}>
-                                {bank.name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    </div>
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      <div>
-                        <label className="block mb-1 font-medium">Tipo de conta</label>
-                        <Select 
-                          value={newAccount.account_type} 
-                          onValueChange={(value) => setNewAccount(prev => ({ ...prev, account_type: value as 'checking' | 'savings' }))}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Selecione o tipo" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="checking">Conta Corrente</SelectItem>
-                            <SelectItem value="savings">Poupança</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div>
-                        <label className="block mb-1 font-medium">Saldo atual (R$)</label>
-                        <Input
-                          type="number"
-                          step="0.01"
-                          value={newAccount.balance}
-                          onChange={e => setNewAccount(prev => ({ ...prev, balance: Number(e.target.value) }))}
-                          placeholder="0,00"
-                        />
-                      </div>
-                    </div>
-                    <div className="text-xs text-muted-foreground">
-                      A data do saldo será registrada como hoje: {formatDateFriendly(new Date())}
-                    </div>
-                    <div className="flex gap-2">
-                      <Button onClick={handleAddAccountDialog} className="flex-1" disabled={savingEdit}>
-                        <Plus className="w-4 h-4 mr-2" />
-                        {savingEdit ? 'Salvando...' : 'Adicionar Conta'}
-                      </Button>
-                      <Button 
-                        variant="outline" 
-                        onClick={() => setShowAddAccountDialog(false)}
-                        disabled={savingEdit}
-                      >
-                        Cancelar
-                      </Button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-          </DialogContent>
-        </Dialog>
-        {/* Dialog para alterar data de projeção */}
-        <Dialog open={openKpiDialog === "projected"} onOpenChange={v => setOpenKpiDialog(v ? "projected" : null)}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Saldo Projetado</DialogTitle>
-            </DialogHeader>
-            <div className="mb-2 text-sm text-muted-foreground">
-              Projete seu saldo final somando todas as entradas e saídas previstas até a data escolhida.
-            </div>
-            <div className="flex items-center gap-2 mb-4">
-              <label className="font-medium">Data de projeção:</label>
-              <Input type="date" value={projectionDate} onChange={e => setProjectionDate(e.target.value)} />
-            </div>
-            <div className="font-bold text-lg mb-2">
-              {new Intl.NumberFormat("pt-BR", {
-                style: "currency",
-                currency: "BRL",
-              }).format(projectedBalance)}
-            </div>
-            <div className="text-sm text-muted-foreground">
-              Saldo das contas + entradas previstas - saídas previstas até {formatDateFriendly(projectionDate)}
-            </div>
-          </DialogContent>
-        </Dialog>
+        <EditTransactionDialog
+          open={showEditDialog}
+          onOpenChange={setShowEditDialog}
+          event={editingEvent}
+          onSave={handleSaveEdit}
+          loading={transactionsLoading}
+        />
 
-        {/* Timeline de eventos */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Calendar className="w-5 h-5" />
-              Eventos
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="p-0">
-            <div className="divide-y">
-              {userLoading || eventsLoading ? (
-                // Skeleton loaders para timeline
-                <>
-                  {[1, 2, 3].map(i => (
-                    <div key={i} className="p-4">
-                      <Skeleton className="h-6 w-48 mb-2" />
-                      <Skeleton className="h-4 w-full mb-2" />
-                      <Skeleton className="h-4 w-32" />
-                    </div>
-                  ))}
-                </>
-              ) : allEvents.length === 0 ? (
-                <div className="text-center py-12 text-muted-foreground">
-                  Nenhum evento cadastrado
-                </div>
-              ) : (
-                allEvents.map(event => (
-                  <div key={event.id + event.dateStr}>
-                    <div className="px-4 py-3 bg-muted/30 border-b">
-                      <div className="flex items-center justify-between">
-                        <h3 className="font-semibold text-foreground">{formatTimelineDate(event.dateObj || '')}</h3>
-                      </div>
-                    </div>
-                    <div className="p-4">
-                      <div className="flex items-center justify-between">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-3 mb-1">
-                            {event.type === "income" ? (
-                              <TrendingUp className="w-4 h-4 text-lime-500" />
-                            ) : (
-                              <TrendingDown className="w-4 h-4 text-red-500" />
-                            )}
-                            <span className="font-medium">{event.description}</span>
-                            {event.type === "expense" && event.expenseType && (
-                              <span className={`text-xs px-2 py-1 rounded-full ${
-                                event.expenseType === "fixed" 
-                                  ? "bg-orange-100 text-orange-700" 
-                                  : event.expenseType === "variable"
-                                  ? "bg-purple-100 text-purple-700"
-                                  : "bg-blue-100 text-blue-700"
-                              }`}>
-                                {event.expenseType === "fixed" ? "Fixa" : event.expenseType === "variable" ? "Variável" : "Assinatura"}
-                              </span>
-                            )}
-                            {event.type === "expense" && event.expenseType === "subscription" && event.subscriptionCard && (
-                              <span className="text-xs px-2 py-1 rounded-full bg-gray-100 text-gray-700">
-                                {creditCards.find(c => c.id === event.subscriptionCard)?.name}
-                              </span>
-                            )}
-                          </div>
-                          <div className="text-xs text-muted-foreground">
-                            {event.isRecurring
-                              ? event.type === "income"
-                                ? "Entrada recorrente"
-                                : "Saída recorrente"
-                              : event.type === "income"
-                                ? "Entrada única"
-                                : "Saída única"}
-                            {event.type === "expense" && event.expenseType === "subscription" && event.subscriptionBillingDay && event.subscriptionCardDueDay && (
-                              <span className="ml-2">
-                                • Cobrança: dia {event.subscriptionBillingDay} • Vencimento: dia {event.subscriptionCardDueDay}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                        <div className="text-right">
-                          <div className={`text-lg font-bold ${event.type === "income" ? "text-lime-600" : "text-red-600"}`}>
-                            {event.type === "income" ? "+" : "-"}
-                            {new Intl.NumberFormat("pt-BR", {
-                              style: "currency",
-                              currency: "BRL",
-                            }).format(event.amount)}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="flex gap-2 mt-2">
-                      <Button variant="ghost" size="icon" onClick={() => handleEdit(event, event.dateStr)}>
-                        <Pencil className="w-4 h-4" />
-                      </Button>
-                      <Button variant="ghost" size="icon" onClick={() => handleDelete(event, event.dateStr)}>
-                        <Trash2 className="w-4 h-4" />
-                      </Button>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </CardContent>
-        </Card>
+        <DeleteTransactionDialog
+          open={showDeleteDialog}
+          onOpenChange={setShowDeleteDialog}
+          event={editingEvent}
+          onConfirm={handleConfirmDelete}
+          loading={transactionsLoading}
+        />
 
-        {/* Dialog de edição: mostrar opções se recorrente */}
-        {showEditDialog && editingEvent && (
-          <Dialog open={showEditDialog} onOpenChange={setShowEditDialog}>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Editar Transação</DialogTitle>
-              </DialogHeader>
-              {editingEvent.isRecurring ? (
-                <div className="mb-4">
-                  <Button variant={editingMode === "single" ? "default" : "outline"} onClick={() => setEditingMode("single")}>Só esta ocorrência</Button>
-                  <Button variant={editingMode === "all" ? "default" : "outline"} onClick={() => setEditingMode("all")}>Toda a recorrência</Button>
-                </div>
-              ) : null}
-              {/* Formulário de edição */}
-              <form className="space-y-4" onSubmit={e => { e.preventDefault(); handleSaveEditTransaction({ description: editDescription, amount: editAmount }); }}>
-                <div>
-                  <label className="block mb-1 font-medium">Descrição</label>
-                  <Input
-                    value={editDescription}
-                    onChange={e => setEditDescription(e.target.value)}
-                    placeholder="Descrição"
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block mb-1 font-medium">Valor (R$)</label>
-                  <Input
-                    type="number"
-                    min={0}
-                    step={0.01}
-                    value={editAmount}
-                    onChange={e => setEditAmount(Number(e.target.value))}
-                    required
-                  />
-                </div>
-                <div className="flex gap-2 justify-end">
-                  <Button type="button" variant="outline" onClick={() => setShowEditDialog(false)}>
-                    Cancelar
-                  </Button>
-                  <Button type="submit" disabled={!editingMode}>Salvar</Button>
-                </div>
-              </form>
-            </DialogContent>
-          </Dialog>
-        )}
+        <KPIDetailsDialog
+          open={!!openKpiDialog}
+          onOpenChange={(open) => setOpenKpiDialog(open ? openKpiDialog : null)}
+          kpiKey={openKpiDialog}
+          events={timelineEvents}
+          creditCards={creditCardsArray}
+          bankAccounts={bankAccounts}
+          onAddAccount={handleAddAccount}
+          onUpdateAccount={handleUpdateAccount}
+          onDeleteAccount={handleDeleteAccount}
+          projectedBalance={projectedBalance}
+          onProjectionDateChange={setProjectionDate}
+          projectionDate={projectionDate}
+        />
 
-        {/* Dialog de remoção: mostrar opções se recorrente */}
-        {showDeleteDialog && editingEvent && (
-          <Dialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Remover Transação</DialogTitle>
-              </DialogHeader>
-              {editingEvent.isRecurring ? (
-                <div className="mb-4">
-                  <Button variant={editingMode === "single" ? "default" : "outline"} onClick={() => setEditingMode("single")}>Só esta ocorrência</Button>
-                  <Button variant={editingMode === "all" ? "default" : "outline"} onClick={() => setEditingMode("all")}>Toda a recorrência</Button>
-                </div>
-              ) : null}
-              <Button onClick={handleConfirmDelete}>Confirmar Remoção</Button>
-            </DialogContent>
-          </Dialog>
-        )}
-
-        {/* Floating Action Button (FAB) para adicionar entrada/saída */}
-        <div
-          className="fixed left-1/2 bottom-8 z-30 flex gap-3 -translate-x-1/2"
-        >
-          <button
-            onClick={() => setShowExpenseDialog(true)}
-            className="flex items-center gap-2 rounded-lg bg-red-500 hover:bg-red-600 text-white shadow px-5 py-3 text-base font-semibold transition-all focus:outline-none focus:ring-2 focus:ring-red-400 focus:ring-offset-2"
-          >
-            <Plus className="w-5 h-5" /> Nova Saída
-          </button>
-          <button
-            onClick={() => setShowEntryDialog(true)}
-            className="flex items-center gap-2 rounded-lg bg-lime-500 hover:bg-lime-600 text-white shadow px-5 py-3 text-base font-semibold transition-all focus:outline-none focus:ring-2 focus:ring-lime-400 focus:ring-offset-2"
-          >
-            <Plus className="w-5 h-5" /> Nova Entrada
-          </button>
-          
-        </div>
-
-        {/* Responsividade para mobile/tablet */}
-        <style jsx global>{`
-          @media (max-width: 640px) {
-            .fixed.left-1\/2.bottom-8 {
-              gap: 0.5rem;
-              bottom: 1.25rem;
-            }
-            .fixed.left-1\/2.bottom-8 button {
-              font-size: 0.95rem;
-              padding: 0.7rem 1.1rem;
-            }
-          }
-        `}</style>
+        {/* Floating Action Buttons */}
+        <FloatingActionButtons
+          onAddExpense={() => setShowExpenseDialog(true)}
+          onAddIncome={() => setShowIncomeDialog(true)}
+        />
       </div>
     </div>
   );

@@ -1,143 +1,186 @@
-"use client";
-
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabaseClient';
-import { 
-  Transaction, 
-  CreateTransactionData, 
-  UpdateTransactionData, 
-  UseTransactionsReturn,
-  RecurrenceException
-} from '@/lib/types/finance';
+import { Transaction, CreateTransactionData, UpdateTransactionData } from '@/lib/types/finance';
 import { toast } from 'sonner';
 
-/**
- * Hook para gerenciar transações
- */
+export interface UseTransactionsReturn {
+  transactions: Transaction[];
+  loading: boolean;
+  error: string | null;
+  loadTransactions: () => Promise<void>;
+  addTransaction: (data: CreateTransactionData) => Promise<Transaction>;
+  updateTransaction: (id: string, data: UpdateTransactionData) => Promise<Transaction>;
+  deleteTransaction: (id: string) => Promise<void>;
+  updateRecurrenceException: (transactionId: string, date: string, data: Partial<Transaction>) => Promise<void>;
+  deleteRecurrenceException: (transactionId: string, date: string) => Promise<void>;
+}
+
 export function useTransactions(): UseTransactionsReturn {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const loadTransactions = useCallback(async () => {
+  const loadTransactions = async () => {
     try {
       setLoading(true);
       setError(null);
       
-      const { data: authData, error: authError } = await supabase.auth.getUser();
-      if (authError || !authData?.user) {
-        throw new Error('Usuário não autenticado');
-      }
-      
-      const { data, error } = await supabase
+      const { data, error: fetchError } = await supabase
         .from('transactions')
         .select('*')
-        .order('created_at', { ascending: true });
+        .order('date', { ascending: true });
 
-      if (error) {
-        throw new Error('Falha ao carregar transações');
+      if (fetchError) {
+        throw fetchError;
       }
 
       setTransactions(data || []);
-    } catch (err: any) {
-      const errorMessage = err.message || 'Erro ao carregar transações';
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Erro ao carregar transações';
       setError(errorMessage);
-      console.error('Erro em useTransactions.loadTransactions:', err);
+      toast.error(errorMessage);
     } finally {
       setLoading(false);
     }
-  }, []);
+  };
 
-  const addTransaction = useCallback(async (transactionData: CreateTransactionData): Promise<Transaction> => {
+  const addTransaction = async (data: CreateTransactionData): Promise<Transaction> => {
     try {
       setError(null);
       
-      const { data: authData, error: authError } = await supabase.auth.getUser();
-      if (authError || !authData?.user) {
-        throw new Error('Usuário não autenticado');
-      }
-      
-      const user_id = authData.user.id;
-      const { data, error } = await supabase
+      const { data: newTransaction, error: insertError } = await supabase
         .from('transactions')
-        .insert([{ ...transactionData, user_id }])
+        .insert([data])
         .select()
         .single();
 
-      if (error) {
-        throw new Error('Falha ao criar transação');
+      if (insertError) {
+        throw insertError;
       }
 
-      const newTransaction = data;
       setTransactions(prev => [...prev, newTransaction]);
-      toast.success('Transação criada com sucesso!');
+      toast.success('Transação adicionada com sucesso!');
       
       return newTransaction;
-    } catch (err: any) {
-      const errorMessage = err.message || 'Erro ao criar transação';
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Erro ao adicionar transação';
       setError(errorMessage);
       toast.error(errorMessage);
       throw err;
     }
-  }, []);
+  };
 
-  const updateTransaction = useCallback(async (id: string, updateData: UpdateTransactionData): Promise<Transaction> => {
+  const updateTransaction = async (id: string, data: UpdateTransactionData): Promise<Transaction> => {
     try {
       setError(null);
       
-      const { data, error } = await supabase
+      const { data: updatedTransaction, error: updateError } = await supabase
         .from('transactions')
-        .update(updateData)
+        .update(data)
         .eq('id', id)
         .select()
         .single();
 
-      if (error) {
-        throw new Error('Falha ao atualizar transação');
+      if (updateError) {
+        throw updateError;
       }
 
-      const updatedTransaction = data;
-      setTransactions(prev => prev.map(transaction => 
-        transaction.id === id ? updatedTransaction : transaction
-      ));
+      setTransactions(prev => 
+        prev.map(t => t.id === id ? updatedTransaction : t)
+      );
       toast.success('Transação atualizada com sucesso!');
       
       return updatedTransaction;
-    } catch (err: any) {
-      const errorMessage = err.message || 'Erro ao atualizar transação';
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Erro ao atualizar transação';
       setError(errorMessage);
       toast.error(errorMessage);
       throw err;
     }
-  }, []);
+  };
 
-  const deleteTransaction = useCallback(async (id: string): Promise<void> => {
+  const deleteTransaction = async (id: string): Promise<void> => {
     try {
       setError(null);
       
-      const { error } = await supabase
+      const { error: deleteError } = await supabase
         .from('transactions')
         .delete()
         .eq('id', id);
 
-      if (error) {
-        throw new Error('Falha ao remover transação');
+      if (deleteError) {
+        throw deleteError;
       }
 
-      setTransactions(prev => prev.filter(transaction => transaction.id !== id));
+      setTransactions(prev => prev.filter(t => t.id !== id));
       toast.success('Transação removida com sucesso!');
-    } catch (err: any) {
-      const errorMessage = err.message || 'Erro ao remover transação';
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Erro ao remover transação';
       setError(errorMessage);
       toast.error(errorMessage);
       throw err;
     }
-  }, []);
+  };
 
-  // Carrega as transações automaticamente quando o hook é montado
+  const updateRecurrenceException = async (
+    transactionId: string, 
+    date: string, 
+    data: Partial<Transaction>
+  ): Promise<void> => {
+    try {
+      setError(null);
+      
+      const { error: exceptionError } = await supabase
+        .from('recurrence_exceptions')
+        .upsert({
+          transaction_id: transactionId,
+          date,
+          action: 'edit',
+          override_amount: data.amount,
+          override_description: data.description,
+        });
+
+      if (exceptionError) {
+        throw exceptionError;
+      }
+
+      toast.success('Exceção de recorrência criada com sucesso!');
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Erro ao criar exceção de recorrência';
+      setError(errorMessage);
+      toast.error(errorMessage);
+      throw err;
+    }
+  };
+
+  const deleteRecurrenceException = async (transactionId: string, date: string): Promise<void> => {
+    try {
+      setError(null);
+      
+      const { error: exceptionError } = await supabase
+        .from('recurrence_exceptions')
+        .upsert({
+          transaction_id: transactionId,
+          date,
+          action: 'delete',
+        });
+
+      if (exceptionError) {
+        throw exceptionError;
+      }
+
+      toast.success('Exceção de recorrência criada com sucesso!');
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Erro ao criar exceção de recorrência';
+      setError(errorMessage);
+      toast.error(errorMessage);
+      throw err;
+    }
+  };
+
   useEffect(() => {
     loadTransactions();
-  }, [loadTransactions]);
+  }, []);
 
   return {
     transactions,
@@ -147,130 +190,7 @@ export function useTransactions(): UseTransactionsReturn {
     addTransaction,
     updateTransaction,
     deleteTransaction,
-  };
-}
-
-/**
- * Hook para gerenciar exceções de recorrência
- */
-export function useRecurrenceExceptions() {
-  const [exceptions, setExceptions] = useState<RecurrenceException[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const loadExceptions = useCallback(async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      
-      const { data, error } = await supabase
-        .from('recurrence_exceptions')
-        .select('*')
-        .order('created_at', { ascending: true });
-
-      if (error) {
-        throw new Error('Falha ao carregar exceções de recorrência');
-      }
-
-      setExceptions(data || []);
-    } catch (err: any) {
-      const errorMessage = err.message || 'Erro ao carregar exceções';
-      setError(errorMessage);
-      console.error('Erro em useRecurrenceExceptions.loadExceptions:', err);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  const addException = useCallback(async (exceptionData: Omit<RecurrenceException, 'id' | 'created_at'>): Promise<RecurrenceException> => {
-    try {
-      setError(null);
-      
-      const { data, error } = await supabase
-        .from('recurrence_exceptions')
-        .insert([exceptionData])
-        .select()
-        .single();
-
-      if (error) {
-        throw new Error('Falha ao criar exceção');
-      }
-
-      const newException = data;
-      setExceptions(prev => [...prev, newException]);
-      
-      return newException;
-    } catch (err: any) {
-      const errorMessage = err.message || 'Erro ao criar exceção';
-      setError(errorMessage);
-      toast.error(errorMessage);
-      throw err;
-    }
-  }, []);
-
-  const updateException = useCallback(async (id: string, updateData: Partial<RecurrenceException>): Promise<RecurrenceException> => {
-    try {
-      setError(null);
-      
-      const { data, error } = await supabase
-        .from('recurrence_exceptions')
-        .update(updateData)
-        .eq('id', id)
-        .select()
-        .single();
-
-      if (error) {
-        throw new Error('Falha ao atualizar exceção');
-      }
-
-      const updatedException = data;
-      setExceptions(prev => prev.map(exception => 
-        exception.id === id ? updatedException : exception
-      ));
-      
-      return updatedException;
-    } catch (err: any) {
-      const errorMessage = err.message || 'Erro ao atualizar exceção';
-      setError(errorMessage);
-      toast.error(errorMessage);
-      throw err;
-    }
-  }, []);
-
-  const deleteException = useCallback(async (id: string): Promise<void> => {
-    try {
-      setError(null);
-      
-      const { error } = await supabase
-        .from('recurrence_exceptions')
-        .delete()
-        .eq('id', id);
-
-      if (error) {
-        throw new Error('Falha ao remover exceção');
-      }
-
-      setExceptions(prev => prev.filter(exception => exception.id !== id));
-    } catch (err: any) {
-      const errorMessage = err.message || 'Erro ao remover exceção';
-      setError(errorMessage);
-      toast.error(errorMessage);
-      throw err;
-    }
-  }, []);
-
-  // Carrega as exceções automaticamente quando o hook é montado
-  useEffect(() => {
-    loadExceptions();
-  }, [loadExceptions]);
-
-  return {
-    exceptions,
-    loading,
-    error,
-    loadExceptions,
-    addException,
-    updateException,
-    deleteException,
+    updateRecurrenceException,
+    deleteRecurrenceException,
   };
 } 

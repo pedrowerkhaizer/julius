@@ -22,9 +22,9 @@ export const AVAILABLE_BANKS: BankInfo[] = [
 ];
 
 /**
- * Lista de cartões de crédito para assinaturas
+ * Lista de cartões para assinaturas
  */
-export const CREDIT_CARDS: CreditCardInfo[] = [
+export const CREDIT_CARDS = [
   { id: "nubank", name: "Nubank" },
   { id: "itau", name: "Itaú" },
   { id: "bradesco", name: "Bradesco" },
@@ -36,7 +36,9 @@ export const CREDIT_CARDS: CreditCardInfo[] = [
   { id: "picpay", name: "PicPay" },
   { id: "mercadopago", name: "Mercado Pago" },
   { id: "outro", name: "Outro" },
-];
+] as const;
+
+export type CreditCardId = typeof CREDIT_CARDS[number]['id'];
 
 /**
  * Tipos de conta bancária
