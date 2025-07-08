@@ -24,6 +24,15 @@ export interface KPIDetailsDialogProps {
   projectedBalance?: number;
   onProjectionDateChange?: (date: string) => void;
   projectionDate?: string;
+  // Novas props para edição/deleção de eventos
+  onEditEvent?: (event: TimelineEvent, occurrenceDate?: string) => void;
+  onDeleteEvent?: (event: TimelineEvent, occurrenceDate?: string) => void;
+}
+
+// Função utilitária para formatar data amigável
+function formatFriendly(dateStr: string) {
+  const d = new Date(dateStr);
+  return d.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
 }
 
 export function KPIDetailsDialog({ 
@@ -38,7 +47,9 @@ export function KPIDetailsDialog({
   onDeleteAccount,
   projectedBalance = 0,
   onProjectionDateChange,
-  projectionDate
+  projectionDate,
+  onEditEvent,
+  onDeleteEvent
 }: KPIDetailsDialogProps) {
   const [editingAccount, setEditingAccount] = useState<BankAccount | null>(null);
   const [newAccount, setNewAccount] = useState<Partial<CreateAccountData & { balance_date?: string }>>({
@@ -196,7 +207,7 @@ export function KPIDetailsDialog({
         </div>
         <div className="text-center">
           <div className="text-sm text-muted-foreground">Saldo</div>
-          <div className={`text-lg font-semibold ${performanceTotals?.total && performanceTotals.total > 0 ? 'text-green-600' : 'text-red-600'}`}>
+          <div className={`text-lg font-semibold ${performanceTotals?.total && performanceTotals.total > 0 ? 'text-green-600' : 'text-red-600'}`}> 
             R$ {performanceTotals?.total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
           </div>
         </div>
@@ -209,11 +220,18 @@ export function KPIDetailsDialog({
           <p className="text-muted-foreground text-sm">Nenhuma entrada no período</p>
         ) : (
           filteredEvents.filter(e => e.type === 'income').map(event => (
-            <div key={event.id} className="flex justify-between items-center p-2 text-muted-foreground rounded-lg">
-              <span className="font-medium">{event.description}</span>
+            <div key={event.id} className="flex items-center gap-2 p-2 text-muted-foreground rounded-lg">
+              <span className="text-xs text-muted-foreground w-20">{formatFriendly(event.dateStr)}</span>
+              <span className="font-medium flex-1">{event.description}</span>
               <span className="text-green-600 font-semibold">
                 R$ {event.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
               </span>
+              <Button variant="ghost" size="icon" onClick={() => onEditEvent && onEditEvent(event, event.dateStr)}>
+                <Pencil className="w-4 h-4" />
+              </Button>
+              <Button variant="ghost" size="icon" onClick={() => onDeleteEvent && onDeleteEvent(event, event.dateStr)}>
+                <Trash2 className="w-4 h-4 text-red-500" />
+              </Button>
             </div>
           ))
         )}
@@ -223,18 +241,23 @@ export function KPIDetailsDialog({
           <p className="text-muted-foreground text-sm">Nenhuma saída no período</p>
         ) : (
           filteredEvents.filter(e => e.type === 'expense').map(event => (
-            <div key={event.id} className="flex justify-between items-center p-2 text-muted-foreground rounded-lg">
-              <div className="flex-1">
-                <span className="font-medium">{event.description}</span>
-                {event.expenseType && (
-                  <span className="text-xs text-muted-foreground ml-2">
-                    ({event.expenseType === "fixed" ? "Fixa" : event.expenseType === "variable" ? "Variável" : "Assinatura"})
-                  </span>
-                )}
-              </div>
+            <div key={event.id} className="flex items-center gap-2 p-2 text-muted-foreground rounded-lg">
+              <span className="text-xs text-muted-foreground w-20">{formatFriendly(event.dateStr)}</span>
+              <span className="font-medium flex-1">{event.description}</span>
+              {event.expenseType && (
+                <span className="text-xs text-muted-foreground ml-2">
+                  ({event.expenseType === "fixed" ? "Fixa" : event.expenseType === "variable" ? "Variável" : "Assinatura"})
+                </span>
+              )}
               <span className="text-red-600 font-semibold">
                 R$ {event.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
               </span>
+              <Button variant="ghost" size="icon" onClick={() => onEditEvent && onEditEvent(event, event.dateStr)}>
+                <Pencil className="w-4 h-4" />
+              </Button>
+              <Button variant="ghost" size="icon" onClick={() => onDeleteEvent && onDeleteEvent(event, event.dateStr)}>
+                <Trash2 className="w-4 h-4 text-red-500" />
+              </Button>
             </div>
           ))
         )}

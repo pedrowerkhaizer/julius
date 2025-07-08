@@ -120,6 +120,22 @@ export default function EventsPage() {
     return totalAccountBalance + projectedIncome - projectedExpense;
   })();
 
+  // Sincronizar projectionDate com o período selecionado
+  useEffect(() => {
+    let newProjectionDate = projectionDate;
+    if (period === 'custom') {
+      // customEnd já é string, mas garantir formato yyyy-mm-dd
+      newProjectionDate = typeof customEnd === 'string' ? customEnd : (customEnd instanceof Date ? customEnd.toISOString().split('T')[0] : projectionDate);
+    } else if (dateRange?.end) {
+      // dateRange.end é Date
+      newProjectionDate = dateRange.end.toISOString().split('T')[0];
+    }
+    if (newProjectionDate !== projectionDate) {
+      setProjectionDate(newProjectionDate);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [period, customStart, customEnd, dateRange?.end]);
+
   // Auth check
   useEffect(() => {
     const checkAuth = async () => {
@@ -316,6 +332,8 @@ export default function EventsPage() {
           projectedBalance={projectedBalance}
           onProjectionDateChange={setProjectionDate}
           projectionDate={projectionDate}
+          onEditEvent={handleEdit}
+          onDeleteEvent={handleDelete}
         />
 
         {/* Floating Action Buttons */}

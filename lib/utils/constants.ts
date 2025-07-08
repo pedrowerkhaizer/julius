@@ -35,6 +35,7 @@ export const CREDIT_CARDS = [
   { id: "c6", name: "C6 Bank" },
   { id: "picpay", name: "PicPay" },
   { id: "mercadopago", name: "Mercado Pago" },
+  { id: "xp", name: "XP Investimentos" },
   { id: "outro", name: "Outro" },
 ] as const;
 
