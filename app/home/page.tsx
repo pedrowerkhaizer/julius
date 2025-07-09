@@ -59,8 +59,7 @@ export default function EventsPage() {
   const [customEnd, setCustomEnd] = useState(new Date().toISOString().split('T')[0]);
   
   // Dialog states
-  const [showIncomeDialog, setShowIncomeDialog] = useState(false);
-  const [showExpenseDialog, setShowExpenseDialog] = useState(false);
+  const [showContextualDialog, setShowContextualDialog] = useState<{ open: boolean, type: 'income' | 'expense', expenseType?: 'fixed' | 'variable' | 'subscription' }>({ open: false, type: 'income' });
   const [showEditDialog, setShowEditDialog] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [openKpiDialog, setOpenKpiDialog] = useState<string | null>(null);
@@ -91,31 +90,35 @@ export default function EventsPage() {
   const projectedBalance = (() => {
     const totalAccountBalance = bankAccounts.reduce((sum, account) => sum + account.balance, 0);
     
-    // Filtrar transações até a data de projeção
+    // Filtrar transações de hoje até a data de projeção
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
     const projectionDateObj = new Date(projectionDate);
-    const projectedTransactions = transactions.filter(transaction => {
-      if (transaction.is_recurring) {
-        if (transaction.day) {
-          const transactionDate = new Date(projectionDateObj.getFullYear(), projectionDateObj.getMonth(), transaction.day);
-          return transactionDate <= projectionDateObj;
+    projectionDateObj.setHours(23, 59, 59, 999);
+
+    let projectedIncome = 0;
+    let projectedExpense = 0;
+
+    transactions.forEach(transaction => {
+      if (transaction.is_recurring && transaction.day) {
+        // Gerar todas as ocorrências entre hoje e a data de projeção
+        let cursor = new Date(today);
+        while (cursor <= projectionDateObj) {
+          const occurrenceDate = new Date(cursor.getFullYear(), cursor.getMonth(), transaction.day);
+          if (occurrenceDate >= today && occurrenceDate <= projectionDateObj) {
+            if (transaction.type === 'income') projectedIncome += transaction.amount;
+            if (transaction.type === 'expense') projectedExpense += transaction.amount;
+          }
+          cursor.setMonth(cursor.getMonth() + 1);
         }
-        return false;
-      } else {
-        if (transaction.date) {
-          const transactionDate = new Date(transaction.date);
-          return transactionDate <= projectionDateObj;
+      } else if (transaction.date) {
+        const transactionDate = new Date(transaction.date);
+        if (transactionDate >= today && transactionDate <= projectionDateObj) {
+          if (transaction.type === 'income') projectedIncome += transaction.amount;
+          if (transaction.type === 'expense') projectedExpense += transaction.amount;
         }
-        return false;
       }
     });
-
-    const projectedIncome = projectedTransactions
-      .filter(t => t.type === 'income')
-      .reduce((sum, t) => sum + t.amount, 0);
-    
-    const projectedExpense = projectedTransactions
-      .filter(t => t.type === 'expense')
-      .reduce((sum, t) => sum + t.amount, 0);
 
     return totalAccountBalance + projectedIncome - projectedExpense;
   })();
@@ -124,8 +127,8 @@ export default function EventsPage() {
   useEffect(() => {
     let newProjectionDate = projectionDate;
     if (period === 'custom') {
-      // customEnd já é string, mas garantir formato yyyy-mm-dd
-      newProjectionDate = typeof customEnd === 'string' ? customEnd : (customEnd instanceof Date ? customEnd.toISOString().split('T')[0] : projectionDate);
+      // customEnd já é string, garantir formato yyyy-mm-dd
+      newProjectionDate = customEnd;
     } else if (dateRange?.end) {
       // dateRange.end é Date
       newProjectionDate = dateRange.end.toISOString().split('T')[0];
@@ -150,8 +153,8 @@ export default function EventsPage() {
   // Handlers
   const handleAddIncome = async (data: any) => {
     try {
-      await addTransaction(data);
-      setShowIncomeDialog(false);
+      await addTransaction({ ...data, user_id: user?.id });
+      setShowContextualDialog({ open: false, type: 'income' });
     } catch (error) {
       console.error('Error adding income:', error);
     }
@@ -159,8 +162,8 @@ export default function EventsPage() {
 
   const handleAddExpense = async (data: any) => {
     try {
-      await addTransaction(data);
-      setShowExpenseDialog(false);
+      await addTransaction({ ...data, user_id: user?.id });
+      setShowContextualDialog({ open: false, type: 'expense' });
     } catch (error) {
       console.error('Error adding expense:', error);
     }
@@ -274,6 +277,8 @@ export default function EventsPage() {
           kpis={kpis}
           onKPIClick={setOpenKpiDialog}
           loading={loading}
+          projectedBalance={projectedBalance}
+          projectedSubtitle={`Até ${new Date(projectionDate).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })}.`}
         />
 
         {/* Timeline */}
@@ -287,22 +292,6 @@ export default function EventsPage() {
         />
 
         {/* Dialogs */}
-        <TransactionDialog
-          open={showIncomeDialog}
-          onOpenChange={setShowIncomeDialog}
-          type="income"
-          onSubmit={handleAddIncome}
-          loading={transactionsLoading}
-        />
-
-        <TransactionDialog
-          open={showExpenseDialog}
-          onOpenChange={setShowExpenseDialog}
-          type="expense"
-          onSubmit={handleAddExpense}
-          loading={transactionsLoading}
-        />
-
         <EditTransactionDialog
           open={showEditDialog}
           onOpenChange={setShowEditDialog}
@@ -334,12 +323,26 @@ export default function EventsPage() {
           projectionDate={projectionDate}
           onEditEvent={handleEdit}
           onDeleteEvent={handleDelete}
+          onAddTransactionContextual={(context) => {
+            setOpenKpiDialog(null);
+            setTimeout(() => setShowContextualDialog({ open: true, ...context }), 150);
+          }}
+        />
+
+        {/* Dialog contextual para nova transação */}
+        <TransactionDialog
+          open={showContextualDialog.open}
+          onOpenChange={(open) => setShowContextualDialog((prev) => ({ ...prev, open }))}
+          type={showContextualDialog.type}
+          expenseType={showContextualDialog.expenseType}
+          onSubmit={showContextualDialog.type === 'income' ? handleAddIncome : handleAddExpense}
+          loading={transactionsLoading}
         />
 
         {/* Floating Action Buttons */}
         <FloatingActionButtons
-          onAddExpense={() => setShowExpenseDialog(true)}
-          onAddIncome={() => setShowIncomeDialog(true)}
+          onAddExpense={() => setShowContextualDialog({ open: true, type: 'expense' })}
+          onAddIncome={() => setShowContextualDialog({ open: true, type: 'income' })}
         />
       </div>
     </div>

@@ -6,9 +6,11 @@ export interface KPIGridProps {
   kpis: KPIData[];
   onKPIClick: (key: string) => void;
   loading: boolean;
+  projectedBalance?: number;
+  projectedSubtitle?: string;
 }
 
-export function KPIGrid({ kpis, onKPIClick, loading }: KPIGridProps) {
+export function KPIGrid({ kpis, onKPIClick, loading, projectedBalance, projectedSubtitle }: KPIGridProps) {
   if (loading) {
     return (
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-12">
@@ -35,6 +37,17 @@ export function KPIGrid({ kpis, onKPIClick, loading }: KPIGridProps) {
           onClick={() => onKPIClick(kpi.key)}
         />
       ))}
+      {typeof projectedBalance === 'number' && (
+        <KPICard
+          key="projected"
+          title="Saldo Projetado"
+          value={projectedBalance}
+          icon="Building2"
+          color="blue"
+          subtitle={projectedSubtitle}
+          onClick={() => onKPIClick('projected')}
+        />
+      )}
     </div>
   );
 } 

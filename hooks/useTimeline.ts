@@ -41,29 +41,23 @@ export function useTimeline({ transactions, dateRange, loading }: UseTimelinePro
           let dateObj: Date;
           
           if (transaction.expense_type === "subscription" && transaction.subscription_billing_day && transaction.subscription_card_due_day) {
-            const billingDay = transaction.subscription_billing_day;
             const cardDueDay = transaction.subscription_card_due_day;
             const year = cursor.getFullYear();
             const month = cursor.getMonth();
-            
-            if (billingDay > cardDueDay) {
-              dateObj = new Date(year, month + 1, billingDay);
-            } else {
-              dateObj = new Date(year, month, billingDay);
-            }
+            dateObj = new Date(year, month, cardDueDay, 12); // Meio-dia para evitar fuso
           } else {
-            dateObj = new Date(cursor.getFullYear(), cursor.getMonth(), transaction.day!);
+            dateObj = new Date(cursor.getFullYear(), cursor.getMonth(), transaction.day!, 12); // Meio-dia para evitar fuso
           }
           
           if (isWithinInterval(dateObj, { start: dateRange.start, end: dateRange.end })) {
             occurrences.push({
-              id: `${transaction.id}-${dateObj.toISOString().split("T")[0]}`,
+              id: `${transaction.id}-${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, '0')}-${String(dateObj.getDate()).padStart(2, '0')}`,
               description: transaction.description,
               amount: transaction.amount,
               type: transaction.type,
               expenseType: transaction.expense_type,
               dateObj,
-              dateStr: dateObj.toISOString().split("T")[0],
+              dateStr: `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, '0')}-${String(dateObj.getDate()).padStart(2, '0')}`,
               isRecurring: true,
               transactionIdOriginal: transaction.id,
               subscriptionCard: transaction.subscription_card,

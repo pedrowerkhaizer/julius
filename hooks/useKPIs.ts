@@ -160,15 +160,6 @@ export function useKPIs({
         color: 'blue',
         subtitle: bankAccounts.length === 0 ? 'Nenhuma conta configurada' : `${bankAccounts.length} conta(s) configurada(s)`,
         count: bankAccounts.length
-      },
-      {
-        key: 'projected',
-        title: 'Saldo Projetado',
-        value: projectedBalance,
-        icon: 'Building2',
-        color: 'blue',
-        subtitle: `Até ${projectionDate.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })}`,
-        count: 0
       }
     ];
   }, [periodTransactions, bankAccounts, dateRange]);

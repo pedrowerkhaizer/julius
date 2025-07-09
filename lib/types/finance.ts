@@ -60,6 +60,7 @@ export interface CreateTransactionData {
   subscription_card?: string;
   subscription_billing_day?: number;
   subscription_card_due_day?: number;
+  user_id?: string;
 }
 
 export interface UpdateTransactionData {

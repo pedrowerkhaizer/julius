@@ -27,6 +27,8 @@ export interface KPIDetailsDialogProps {
   // Novas props para edição/deleção de eventos
   onEditEvent?: (event: TimelineEvent, occurrenceDate?: string) => void;
   onDeleteEvent?: (event: TimelineEvent, occurrenceDate?: string) => void;
+  // Nova prop para adicionar transação contextual
+  onAddTransactionContextual?: (context: { type: 'income' | 'expense', expenseType?: 'fixed' | 'variable' | 'subscription' }) => void;
 }
 
 // Função utilitária para formatar data amigável
@@ -49,7 +51,8 @@ export function KPIDetailsDialog({
   onProjectionDateChange,
   projectionDate,
   onEditEvent,
-  onDeleteEvent
+  onDeleteEvent,
+  onAddTransactionContextual
 }: KPIDetailsDialogProps) {
   const [editingAccount, setEditingAccount] = useState<BankAccount | null>(null);
   const [newAccount, setNewAccount] = useState<Partial<CreateAccountData & { balance_date?: string }>>({
@@ -221,9 +224,9 @@ export function KPIDetailsDialog({
         ) : (
           filteredEvents.filter(e => e.type === 'income').map(event => (
             <div key={event.id} className="flex items-center gap-2 p-2 text-muted-foreground rounded-lg">
-              <span className="text-xs text-muted-foreground w-20">{formatFriendly(event.dateStr)}</span>
-              <span className="font-medium flex-1">{event.description}</span>
-              <span className="text-green-600 font-semibold">
+              <span className="font-regular text-muted-foreground w-20">{formatFriendly(event.dateStr)}</span>
+              <span className="font-regular flex-1">{event.description}</span>
+              <span className="font-regular ">
                 R$ {event.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
               </span>
               <Button variant="ghost" size="icon" onClick={() => onEditEvent && onEditEvent(event, event.dateStr)}>
@@ -242,15 +245,11 @@ export function KPIDetailsDialog({
         ) : (
           filteredEvents.filter(e => e.type === 'expense').map(event => (
             <div key={event.id} className="flex items-center gap-2 p-2 text-muted-foreground rounded-lg">
-              <span className="text-xs text-muted-foreground w-20">{formatFriendly(event.dateStr)}</span>
-              <span className="font-medium flex-1">{event.description}</span>
-              {event.expenseType && (
-                <span className="text-xs text-muted-foreground ml-2">
-                  ({event.expenseType === "fixed" ? "Fixa" : event.expenseType === "variable" ? "Variável" : "Assinatura"})
-                </span>
-              )}
-              <span className="text-red-600 font-semibold">
-                R$ {event.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+              <span className="font-regular text-muted-foreground w-20">{formatFriendly(event.dateStr)}</span>
+              <span className="font-regular flex-1">{event.description}</span>
+              
+              <span className="font-regular">
+               -R$ {event.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
               </span>
               <Button variant="ghost" size="icon" onClick={() => onEditEvent && onEditEvent(event, event.dateStr)}>
                 <Pencil className="w-4 h-4" />
@@ -542,6 +541,12 @@ export function KPIDetailsDialog({
                   ({creditCards.find(c => c.id === event.subscriptionCard)?.name || "Cartão"})
                 </span>
               )}
+              <Button variant="ghost" size="icon" onClick={() => onEditEvent && onEditEvent(event, event.dateStr)}>
+                <Pencil className="w-4 h-4" />
+              </Button>
+              <Button variant="ghost" size="icon" onClick={() => onDeleteEvent && onDeleteEvent(event, event.dateStr)}>
+                <Trash2 className="w-4 h-4 text-red-500" />
+              </Button>
             </div>
           </li>
         ))
@@ -573,7 +578,24 @@ export function KPIDetailsDialog({
             {getTitle()}
           </DialogTitle>
         </DialogHeader>
-        
+        {/* Botão Nova Transação contextual */}
+        {['income','expense','fixed','variable','subscription'].includes(kpiKey) && (
+          <div className="mb-4 flex justify-end">
+            <Button
+              variant="outline"
+              onClick={() => {
+                if (!onAddTransactionContextual) return;
+                if (kpiKey === 'income') onAddTransactionContextual({ type: 'income' });
+                else if (kpiKey === 'expense') onAddTransactionContextual({ type: 'expense' });
+                else if (kpiKey === 'fixed') onAddTransactionContextual({ type: 'expense', expenseType: 'fixed' });
+                else if (kpiKey === 'variable') onAddTransactionContextual({ type: 'expense', expenseType: 'variable' });
+                else if (kpiKey === 'subscription') onAddTransactionContextual({ type: 'expense', expenseType: 'subscription' });
+              }}
+            >
+              <Plus className="w-4 h-4 mr-2" /> Nova Transação
+            </Button>
+          </div>
+        )}
         <div className="mb-4 text-sm text-muted-foreground">
           {getDescription()}
         </div>
