@@ -27,6 +27,9 @@ import {
 import { supabase } from "@/lib/supabaseClient";
 import { getUserProfile, updateUserProfile, createUserProfile } from '@/lib/supabaseClient';
 import { Skeleton } from "@/components/ui/skeleton";
+import { CreditCardList } from '@/components/credit-cards/CreditCardList';
+import { useCreditCards } from '@/hooks/useCreditCards';
+import { CreditCardInvoices } from '@/components/credit-cards/CreditCardInvoices';
 
 const notificationTypes = [
   {
@@ -143,6 +146,9 @@ export default function AjustesPage() {
   const [profileLoading, setProfileLoading] = useState(true);
   const [profileError, setProfileError] = useState<string | null>(null);
 
+  // Adicionar estado para userId
+  const [userId, setUserId] = useState<string | null>(null);
+
   // Carregar perfil do usuário ao abrir a tela
   useEffect(() => {
     async function loadProfile() {
@@ -152,6 +158,7 @@ export default function AjustesPage() {
         const { data: authData, error: authError } = await supabase.auth.getUser();
         if (authError || !authData?.user) throw new Error('Usuário não autenticado');
         const userId = authData.user.id;
+        setUserId(userId);
         let profile;
         try {
           profile = await getUserProfile(userId);
@@ -193,6 +200,58 @@ export default function AjustesPage() {
     }
     loadAccounts();
   }, []);
+
+  // Hook dos cartões de crédito
+  const {
+    cards: creditCards,
+    loading: creditCardsLoading,
+    createCard,
+    updateCard,
+    deleteCard,
+    getInvoices,
+    upsertInvoice
+  } = useCreditCards(userId || '');
+
+  // Estado para faturas de cada cartão
+  const [cardInvoices, setCardInvoices] = useState<Record<string, any[]>>({});
+  const [invoicesLoading, setInvoicesLoading] = useState<Record<string, boolean>>({});
+
+  // Função para buscar faturas de um cartão
+  const fetchInvoices = async (cardId: string) => {
+    setInvoicesLoading(prev => ({ ...prev, [cardId]: true }));
+    try {
+      const invoices = await (creditCards.length && userId ? await getInvoices(cardId) : []);
+      setCardInvoices(prev => ({ ...prev, [cardId]: invoices }));
+    } finally {
+      setInvoicesLoading(prev => ({ ...prev, [cardId]: false }));
+    }
+  };
+
+  // Buscar faturas ao carregar cartões
+  useEffect(() => {
+    if (!userId) return;
+    creditCards.forEach(card => {
+      if (!cardInvoices[card.id]) fetchInvoices(card.id);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [creditCards, userId]);
+
+  // Função para salvar/editar fatura
+  const handleSaveInvoice = async (cardId: string, invoice: { month: string; value: number }) => {
+    if (!userId) return;
+    setInvoicesLoading(prev => ({ ...prev, [cardId]: true }));
+    try {
+      await upsertInvoice({
+        user_id: userId,
+        credit_card_id: cardId,
+        month: invoice.month,
+        value: invoice.value,
+      });
+      await fetchInvoices(cardId);
+    } finally {
+      setInvoicesLoading(prev => ({ ...prev, [cardId]: false }));
+    }
+  };
 
   // Salvar perfil
   async function handleSave(e: React.FormEvent) {
@@ -698,6 +757,33 @@ export default function AjustesPage() {
                       do seu controle financeiro. Você pode ajustar os valores sempre que necessário.
                     </p>
                   </div>
+                </div>
+              </div>
+
+              {/* Cartões de Crédito */}
+              <div>
+                <CreditCardList
+                  bankAccounts={bankAccounts}
+                  cards={creditCards}
+                  loading={creditCardsLoading}
+                  onCreate={async (card) => {
+                    if (!userId) return;
+                    await createCard({ ...card, user_id: userId });
+                  }}
+                  onUpdate={updateCard}
+                  onDelete={deleteCard}
+                />
+                {/* Faturas de cada cartão */}
+                <div className="mt-8 space-y-8">
+                  {creditCards.map(card => (
+                    <CreditCardInvoices
+                      key={card.id}
+                      card={card}
+                      invoices={cardInvoices[card.id] || []}
+                      loading={!!invoicesLoading[card.id]}
+                      onSave={invoice => handleSaveInvoice(card.id, invoice)}
+                    />
+                  ))}
                 </div>
               </div>
               <div className="flex justify-end">

@@ -13,6 +13,7 @@ import { useTimeline } from "@/hooks/useTimeline";
 import { useTransactions } from "@/hooks/useTransactions";
 import { useBankAccounts } from "@/hooks/useBankAccounts";
 import { useUserProfile } from "@/hooks/useUserProfile";
+import { useCreditCards } from '@/hooks/useCreditCards';
 
 // Layout components
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -22,6 +23,7 @@ import { FloatingActionButtons } from "@/components/layout/FloatingActionButtons
 import { KPIGrid } from "@/components/dashboard/KPIGrid";
 import { Timeline } from "@/components/dashboard/Timeline";
 import { PeriodFilterComponent } from "@/components/dashboard/PeriodFilter";
+import { CreditCardInvoices } from '@/components/credit-cards/CreditCardInvoices';
 
 // Dialog components
 import { TransactionDialog } from "@/components/dialogs/TransactionDialog";
@@ -251,6 +253,54 @@ export default function EventsPage() {
     }
   };
 
+  // Cartões de crédito e faturas
+  const [userId, setUserId] = useState<string | null>(null);
+  const {
+    cards: creditCards,
+    getInvoices,
+    upsertInvoice
+  } = useCreditCards(userId || '');
+  const [cardInvoices, setCardInvoices] = useState<Record<string, any[]>>({});
+  const [invoicesLoading, setInvoicesLoading] = useState<Record<string, boolean>>({});
+
+  // Buscar userId ao carregar user
+  useEffect(() => {
+    if (user?.id) setUserId(user.id);
+  }, [user]);
+
+  // Buscar faturas ao carregar cartões
+  useEffect(() => {
+    if (!userId) return;
+    creditCards.forEach(card => {
+      if (!cardInvoices[card.id]) {
+        setInvoicesLoading(prev => ({ ...prev, [card.id]: true }));
+        getInvoices(card.id).then(invoices => {
+          setCardInvoices(prev => ({ ...prev, [card.id]: invoices }));
+        }).finally(() => setInvoicesLoading(prev => ({ ...prev, [card.id]: false })));
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [creditCards, userId]);
+
+  // Função para salvar/editar fatura
+  const handleSaveInvoice = async (cardId: string, invoice: { month: string; value: number }) => {
+    if (!userId) return;
+    setInvoicesLoading(prev => ({ ...prev, [cardId]: true }));
+    try {
+      await upsertInvoice({
+        user_id: userId,
+        credit_card_id: cardId,
+        month: invoice.month,
+        value: invoice.value,
+      });
+      // Atualizar faturas após salvar
+      const invoices = await getInvoices(cardId);
+      setCardInvoices(prev => ({ ...prev, [cardId]: invoices }));
+    } finally {
+      setInvoicesLoading(prev => ({ ...prev, [cardId]: false }));
+    }
+  };
+
   const loading = userLoading || transactionsLoading || kpisLoading || timelineLoading;
 
   return (
@@ -344,6 +394,21 @@ export default function EventsPage() {
           onAddExpense={() => setShowContextualDialog({ open: true, type: 'expense' })}
           onAddIncome={() => setShowContextualDialog({ open: true, type: 'income' })}
         />
+        {/* Faturas dos cartões de crédito */}
+        {creditCards.length > 0 && (
+          <div className="mt-8 space-y-8">
+            <h3 className="font-semibold text-lg">Próximas Faturas de Cartão de Crédito</h3>
+            {creditCards.map(card => (
+              <CreditCardInvoices
+                key={card.id}
+                card={card}
+                invoices={cardInvoices[card.id] || []}
+                loading={!!invoicesLoading[card.id]}
+                onSave={invoice => handleSaveInvoice(card.id, invoice)}
+              />
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

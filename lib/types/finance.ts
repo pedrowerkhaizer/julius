@@ -190,4 +190,26 @@ export interface TransactionOccurrence {
   subscriptionCard?: string;
   subscriptionBillingDay?: number;
   subscriptionCardDueDay?: number;
+}
+
+export interface CreditCard {
+  id: string;
+  user_id: string;
+  bank_id: string;
+  name: string;
+  closing_day: number;
+  due_day: number;
+  color?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreditCardInvoice {
+  id: string;
+  user_id: string;
+  credit_card_id: string;
+  month: string; // 'YYYY-MM'
+  value: number;
+  created_at: string;
+  updated_at: string;
 } 
