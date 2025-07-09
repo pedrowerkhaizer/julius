@@ -72,187 +72,6 @@ export default function EventsPage() {
   // Estado para projeção
   const [projectionDate, setProjectionDate] = useState(new Date().toISOString().split('T')[0]);
 
-  // Custom hooks for calculations
-  const { kpis, dateRange, loading: kpisLoading } = useKPIs({
-    transactions,
-    bankAccounts,
-    period,
-    customStart,
-    customEnd,
-    loading: transactionsLoading
-  });
-
-  const { timelineEvents, groupedEvents, loading: timelineLoading } = useTimeline({
-    transactions,
-    dateRange,
-    loading: transactionsLoading
-  });
-
-  // Calcular saldo projetado baseado na data selecionada
-  const projectedBalance = (() => {
-    const totalAccountBalance = bankAccounts.reduce((sum, account) => sum + account.balance, 0);
-    
-    // Filtrar transações de hoje até a data de projeção
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const projectionDateObj = new Date(projectionDate);
-    projectionDateObj.setHours(23, 59, 59, 999);
-
-    let projectedIncome = 0;
-    let projectedExpense = 0;
-
-    transactions.forEach(transaction => {
-      if (transaction.is_recurring && transaction.day) {
-        // Gerar todas as ocorrências entre hoje e a data de projeção
-        let cursor = new Date(today);
-        while (cursor <= projectionDateObj) {
-          const occurrenceDate = new Date(cursor.getFullYear(), cursor.getMonth(), transaction.day);
-          if (occurrenceDate >= today && occurrenceDate <= projectionDateObj) {
-            if (transaction.type === 'income') projectedIncome += transaction.amount;
-            if (transaction.type === 'expense') projectedExpense += transaction.amount;
-          }
-          cursor.setMonth(cursor.getMonth() + 1);
-        }
-      } else if (transaction.date) {
-        const transactionDate = new Date(transaction.date);
-        if (transactionDate >= today && transactionDate <= projectionDateObj) {
-          if (transaction.type === 'income') projectedIncome += transaction.amount;
-          if (transaction.type === 'expense') projectedExpense += transaction.amount;
-        }
-      }
-    });
-
-    return totalAccountBalance + projectedIncome - projectedExpense;
-  })();
-
-  // Sincronizar projectionDate com o período selecionado
-  useEffect(() => {
-    let newProjectionDate = projectionDate;
-    if (period === 'custom') {
-      // customEnd já é string, garantir formato yyyy-mm-dd
-      newProjectionDate = customEnd;
-    } else if (dateRange?.end) {
-      // dateRange.end é Date
-      newProjectionDate = dateRange.end.toISOString().split('T')[0];
-    }
-    if (newProjectionDate !== projectionDate) {
-      setProjectionDate(newProjectionDate);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [period, customStart, customEnd, dateRange?.end]);
-
-  // Auth check
-  useEffect(() => {
-    const checkAuth = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        router.push('/login');
-      }
-    };
-    checkAuth();
-  }, [router]);
-
-  // Handlers
-  const handleAddIncome = async (data: any) => {
-    try {
-      await addTransaction({ ...data, user_id: user?.id });
-      setShowContextualDialog({ open: false, type: 'income' });
-    } catch (error) {
-      console.error('Error adding income:', error);
-    }
-  };
-
-  const handleAddExpense = async (data: any) => {
-    try {
-      await addTransaction({ ...data, user_id: user?.id });
-      setShowContextualDialog({ open: false, type: 'expense' });
-    } catch (error) {
-      console.error('Error adding expense:', error);
-    }
-  };
-
-  const handleEdit = (event: any, occurrenceDate?: string) => {
-    setEditingEvent({ ...event, occurrenceDate });
-    setShowEditDialog(true);
-  };
-
-  const handleDelete = (event: any, occurrenceDate?: string) => {
-    setEditingEvent({ ...event, occurrenceDate });
-    setShowDeleteDialog(true);
-  };
-
-  const handleSaveEdit = async (data: any, mode: 'single' | 'all') => {
-    if (!editingEvent) return;
-
-    try {
-      if (mode === 'single' && editingEvent.occurrenceDate) {
-        // Create recurrence exception
-        await updateRecurrenceException(
-          editingEvent.transactionIdOriginal,
-          editingEvent.occurrenceDate,
-          data
-        );
-      } else {
-        // Update the entire transaction
-        await updateTransaction(editingEvent.transactionIdOriginal, data);
-      }
-      setShowEditDialog(false);
-      setEditingEvent(null);
-    } catch (error) {
-      console.error('Error updating transaction:', error);
-    }
-  };
-
-  const handleConfirmDelete = async (mode: 'single' | 'all') => {
-    if (!editingEvent) return;
-
-    try {
-      if (mode === 'single' && editingEvent.occurrenceDate) {
-        // Create recurrence exception for deletion
-        await deleteRecurrenceException(
-          editingEvent.transactionIdOriginal,
-          editingEvent.occurrenceDate
-        );
-      } else {
-        // Delete the entire transaction
-        await deleteTransaction(editingEvent.transactionIdOriginal);
-      }
-      setShowDeleteDialog(false);
-      setEditingEvent(null);
-    } catch (error) {
-      console.error('Error deleting transaction:', error);
-    }
-  };
-
-  const handleLogout = () => {
-    // This will be handled by the PageHeader component
-  };
-
-  // Handlers para contas bancárias
-  const handleAddAccount = async (data: any) => {
-    try {
-      await addAccount(data);
-    } catch (error) {
-      console.error('Error adding account:', error);
-    }
-  };
-
-  const handleUpdateAccount = async (id: string, data: any) => {
-    try {
-      await updateAccount(id, data);
-    } catch (error) {
-      console.error('Error updating account:', error);
-    }
-  };
-
-  const handleDeleteAccount = async (id: string) => {
-    try {
-      await deleteAccount(id);
-    } catch (error) {
-      console.error('Error deleting account:', error);
-    }
-  };
-
   // Cartões de crédito e faturas
   const [userId, setUserId] = useState<string | null>(null);
   const {
@@ -300,6 +119,239 @@ export default function EventsPage() {
       setInvoicesLoading(prev => ({ ...prev, [cardId]: false }));
     }
   };
+
+  // Calcular saldo projetado baseado na data selecionada
+  const projectedBalance = (() => {
+    const totalAccountBalance = bankAccounts.reduce((sum, account) => sum + account.balance, 0);
+    
+    // Filtrar transações de hoje até a data de projeção
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const projectionDateObj = new Date(projectionDate);
+    projectionDateObj.setHours(23, 59, 59, 999);
+
+    let projectedIncome = 0;
+    let projectedExpense = 0;
+
+    transactions.forEach(transaction => {
+      if (transaction.is_recurring && transaction.day) {
+        // Gerar todas as ocorrências entre hoje e a data de projeção
+        let cursor = new Date(today);
+        while (cursor <= projectionDateObj) {
+          const occurrenceDate = new Date(cursor.getFullYear(), cursor.getMonth(), transaction.day);
+          if (occurrenceDate >= today && occurrenceDate <= projectionDateObj) {
+            if (transaction.type === 'income') projectedIncome += transaction.amount;
+            if (transaction.type === 'expense') projectedExpense += transaction.amount;
+          }
+          cursor.setMonth(cursor.getMonth() + 1);
+        }
+      } else if (transaction.date) {
+        const transactionDate = new Date(transaction.date);
+        if (transactionDate >= today && transactionDate <= projectionDateObj) {
+          if (transaction.type === 'income') projectedIncome += transaction.amount;
+          if (transaction.type === 'expense') projectedExpense += transaction.amount;
+        }
+      }
+    });
+
+    // Somar faturas de cartão de crédito cujo vencimento está entre hoje e a data de projeção
+    let projectedInvoices = 0;
+    creditCards.forEach(card => {
+      const invoices = cardInvoices[card.id] || [];
+      invoices.forEach(invoice => {
+        // Calcular data de vencimento da fatura
+        const [year, month] = invoice.month.split('-').map(Number);
+        const dueDate = new Date(year, month - 1, card.due_day, 12); // Meio-dia para evitar fuso
+        if (dueDate >= today && dueDate <= projectionDateObj) {
+          projectedInvoices += invoice.value;
+        }
+      });
+    });
+
+    return totalAccountBalance + projectedIncome - projectedExpense - projectedInvoices;
+  })();
+
+  // Juntar todas as invoices de todos os cartões
+  const allInvoices = Object.values(cardInvoices).flat();
+
+  // Chamada única de useKPIs, passando todas as invoices
+  const { kpis, dateRange, loading: kpisLoading } = useKPIs({
+    transactions,
+    bankAccounts,
+    period,
+    customStart,
+    customEnd,
+    loading: transactionsLoading,
+    invoices: allInvoices // Passa todas as invoices
+  });
+
+  // Sincronizar projectionDate com o período selecionado (agora depois de dateRange)
+  useEffect(() => {
+    let newProjectionDate = projectionDate;
+    if (period === 'custom') {
+      // customEnd já é string, garantir formato yyyy-mm-dd
+      newProjectionDate = customEnd;
+    } else if (dateRange?.end) {
+      // dateRange.end é Date
+      newProjectionDate = dateRange.end.toISOString().split('T')[0];
+    }
+    if (newProjectionDate !== projectionDate) {
+      setProjectionDate(newProjectionDate);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [period, customStart, customEnd, dateRange?.end]);
+
+  // Auth check
+  useEffect(() => {
+    const checkAuth = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        router.push('/login');
+      }
+    };
+    checkAuth();
+  }, [router]);
+
+  // Handlers
+  const handleAddIncome = async (data: any) => {
+    if (userLoading || !user?.id) {
+      toast.error('Aguarde, carregando usuário...');
+      return;
+    }
+    console.log('handleAddIncome chamado', data);
+    try {
+      await addTransaction({ ...data, user_id: user.id });
+      setShowContextualDialog({ open: false, type: 'income' });
+    } catch (error) {
+      console.error('Error adding income:', error);
+    }
+  };
+
+  const handleAddExpense = async (data: any) => {
+    if (userLoading || !user?.id) {
+      toast.error('Aguarde, carregando usuário...');
+      return;
+    }
+    console.log('handleAddExpense chamado', data);
+    try {
+      await addTransaction({ ...data, user_id: user.id });
+      setShowContextualDialog({ open: false, type: 'expense' });
+    } catch (error) {
+      console.error('Error adding expense:', error);
+    }
+  };
+
+  const handleEdit = (event: any, occurrenceDate?: string) => {
+    if (userLoading || !user?.id) {
+      toast.error('Aguarde, carregando usuário...');
+      return;
+    }
+    setEditingEvent({ ...event, occurrenceDate });
+    setShowEditDialog(true);
+  };
+
+  const handleDelete = (event: any, occurrenceDate?: string) => {
+    if (userLoading || !user?.id) {
+      toast.error('Aguarde, carregando usuário...');
+      return;
+    }
+    setEditingEvent({ ...event, occurrenceDate });
+    setShowDeleteDialog(true);
+  };
+
+  const handleSaveEdit = async (data: any, mode: 'single' | 'all') => {
+    if (!editingEvent) return;
+    if (userLoading || !user?.id) {
+      toast.error('Aguarde, carregando usuário...');
+      return;
+    }
+    try {
+      if (mode === 'single' && editingEvent.occurrenceDate) {
+        await updateRecurrenceException(
+          editingEvent.transactionIdOriginal,
+          editingEvent.occurrenceDate,
+          data
+        );
+      } else {
+        await updateTransaction(editingEvent.transactionIdOriginal, data);
+      }
+      setShowEditDialog(false);
+      setEditingEvent(null);
+    } catch (error) {
+      console.error('Error updating transaction:', error);
+    }
+  };
+
+  const handleConfirmDelete = async (mode: 'single' | 'all') => {
+    if (!editingEvent) return;
+    if (userLoading || !user?.id) {
+      toast.error('Aguarde, carregando usuário...');
+      return;
+    }
+    try {
+      if (mode === 'single' && editingEvent.occurrenceDate) {
+        await deleteRecurrenceException(
+          editingEvent.transactionIdOriginal,
+          editingEvent.occurrenceDate
+        );
+      } else {
+        await deleteTransaction(editingEvent.transactionIdOriginal);
+      }
+      setShowDeleteDialog(false);
+      setEditingEvent(null);
+    } catch (error) {
+      console.error('Error deleting transaction:', error);
+    }
+  };
+
+  const handleLogout = () => {
+    // This will be handled by the PageHeader component
+  };
+
+  // Handlers para contas bancárias
+  const handleAddAccount = async (data: any) => {
+    if (userLoading || !user?.id) {
+      toast.error('Aguarde, carregando usuário...');
+      return;
+    }
+    try {
+      await addAccount(data);
+    } catch (error) {
+      console.error('Error adding account:', error);
+    }
+  };
+
+  const handleUpdateAccount = async (id: string, data: any) => {
+    if (userLoading || !user?.id) {
+      toast.error('Aguarde, carregando usuário...');
+      return;
+    }
+    try {
+      await updateAccount(id, data);
+    } catch (error) {
+      console.error('Error updating account:', error);
+    }
+  };
+
+  const handleDeleteAccount = async (id: string) => {
+    if (userLoading || !user?.id) {
+      toast.error('Aguarde, carregando usuário...');
+      return;
+    }
+    try {
+      await deleteAccount(id);
+    } catch (error) {
+      console.error('Error deleting account:', error);
+    }
+  };
+
+  const { timelineEvents, groupedEvents, loading: timelineLoading } = useTimeline({
+    transactions,
+    dateRange,
+    loading: transactionsLoading,
+    invoices: allInvoices, // NOVO
+    creditCards // NOVO
+  });
 
   const loading = userLoading || transactionsLoading || kpisLoading || timelineLoading;
 
@@ -391,8 +443,20 @@ export default function EventsPage() {
 
         {/* Floating Action Buttons */}
         <FloatingActionButtons
-          onAddExpense={() => setShowContextualDialog({ open: true, type: 'expense' })}
-          onAddIncome={() => setShowContextualDialog({ open: true, type: 'income' })}
+          onAddExpense={() => {
+            if (userLoading || !user?.id) {
+              toast.error('Aguarde, carregando usuário...');
+              return;
+            }
+            setShowContextualDialog({ open: true, type: 'expense' });
+          }}
+          onAddIncome={() => {
+            if (userLoading || !user?.id) {
+              toast.error('Aguarde, carregando usuário...');
+              return;
+            }
+            setShowContextualDialog({ open: true, type: 'income' });
+          }}
         />
         {/* Faturas dos cartões de crédito */}
         {creditCards.length > 0 && (

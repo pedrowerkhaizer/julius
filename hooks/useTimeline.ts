@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Transaction } from '@/lib/types/finance';
+import { Transaction, CreditCardInvoice, CreditCard } from '@/lib/types/finance';
 import { addMonths, isWithinInterval, parseISO } from 'date-fns';
 
 export interface TimelineEvent {
@@ -21,9 +21,11 @@ export interface UseTimelineProps {
   transactions: Transaction[];
   dateRange: { start: Date; end: Date };
   loading: boolean;
+  invoices?: CreditCardInvoice[]; // NOVO
+  creditCards?: CreditCard[]; // NOVO
 }
 
-export function useTimeline({ transactions, dateRange, loading }: UseTimelineProps) {
+export function useTimeline({ transactions, dateRange, loading, invoices = [], creditCards = [] }: UseTimelineProps) {
   const timelineEvents = useMemo(() => {
     if (loading) return [];
 
@@ -90,11 +92,32 @@ export function useTimeline({ transactions, dateRange, loading }: UseTimelinePro
       }))
       .filter(event => isWithinInterval(event.dateObj, { start: dateRange.start, end: dateRange.end }));
 
-    const allEvents = [...recurringEvents, ...singleEvents];
+    // NOVO: Eventos de pagamento de fatura de cartão de crédito
+    const invoiceEvents: TimelineEvent[] = [];
+    invoices.forEach(invoice => {
+      const card = creditCards.find(c => c.id === invoice.credit_card_id);
+      if (!card) return;
+      const [year, month] = invoice.month.split('-').map(Number);
+      const dueDate = new Date(year, month - 1, card.due_day, 12);
+      if (isWithinInterval(dueDate, { start: dateRange.start, end: dateRange.end })) {
+        invoiceEvents.push({
+          id: `invoice-${invoice.id}`,
+          description: `Pagamento fatura ${card.name}`,
+          amount: invoice.value,
+          type: 'expense',
+          dateObj: dueDate,
+          dateStr: `${dueDate.getFullYear()}-${String(dueDate.getMonth() + 1).padStart(2, '0')}-${String(dueDate.getDate()).padStart(2, '0')}`,
+          isRecurring: false,
+          transactionIdOriginal: invoice.id,
+        });
+      }
+    });
+
+    const allEvents = [...recurringEvents, ...singleEvents, ...invoiceEvents];
     allEvents.sort((a, b) => a.dateObj.getTime() - b.dateObj.getTime());
 
     return allEvents;
-  }, [transactions, dateRange, loading]);
+  }, [transactions, dateRange, loading, invoices, creditCards]);
 
   // Group events by date for timeline display
   const groupedEvents = useMemo(() => {

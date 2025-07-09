@@ -47,20 +47,20 @@ export function useTransactions(): UseTransactionsReturn {
   const addTransaction = async (data: CreateTransactionData): Promise<Transaction> => {
     try {
       setError(null);
-      
+      console.log('[useTransactions] addTransaction chamado', data);
+      console.log('[useTransactions] antes do insert');
       const { data: newTransaction, error: insertError } = await supabase
         .from('transactions')
         .insert([data])
         .select()
         .single();
-
+      console.log('[useTransactions] depois do insert');
+      console.log('[useTransactions] Supabase retorno', { newTransaction, insertError });
       if (insertError) {
         throw insertError;
       }
-
       setTransactions(prev => [...prev, newTransaction]);
       toast.success('Transação adicionada com sucesso!');
-      
       return newTransaction;
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Erro ao adicionar transação';

@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Transaction, BankAccount } from '@/lib/types/finance';
+import { Transaction, BankAccount, CreditCardInvoice } from '@/lib/types/finance';
 import { addMonths, startOfMonth, endOfMonth, isWithinInterval, parseISO } from 'date-fns';
 
 export interface KPIData {
@@ -19,6 +19,7 @@ export interface UseKPIsProps {
   customStart?: string;
   customEnd?: string;
   loading: boolean;
+  invoices?: CreditCardInvoice[]; // NOVO
 }
 
 export function useKPIs({ 
@@ -27,7 +28,8 @@ export function useKPIs({
   period, 
   customStart, 
   customEnd, 
-  loading 
+  loading,
+  invoices = [] // NOVO
 }: UseKPIsProps) {
   const today = new Date();
 
@@ -74,13 +76,28 @@ export function useKPIs({
     });
   }, [transactions, dateRange]);
 
+  // NOVO: Somar faturas de cartão de crédito do período como saída
+  const invoicesExpense = useMemo(() => {
+    let total = 0;
+    invoices.forEach(invoice => {
+      // Descobrir o dia de vencimento não é possível aqui, mas para KPI basta considerar o mês
+      // Se a fatura é do mês do período, soma
+      const [year, month] = invoice.month.split('-').map(Number);
+      const invoiceDate = new Date(year, month - 1, 1);
+      if (invoiceDate >= startOfMonth(dateRange.start) && invoiceDate <= endOfMonth(dateRange.end)) {
+        total += invoice.value;
+      }
+    });
+    return total;
+  }, [invoices, dateRange]);
+
   // Calculate KPIs
   const kpis = useMemo((): KPIData[] => {
     const incomeTransactions = periodTransactions.filter(t => t.type === 'income');
     const expenseTransactions = periodTransactions.filter(t => t.type === 'expense');
     
     const totalIncome = incomeTransactions.reduce((sum, t) => sum + t.amount, 0);
-    const totalExpense = expenseTransactions.reduce((sum, t) => sum + t.amount, 0);
+    const totalExpense = expenseTransactions.reduce((sum, t) => sum + t.amount, 0) + invoicesExpense; // SOMA AS FATURAS
     const monthPerformance = totalIncome - totalExpense;
     
     const fixedExpenses = expenseTransactions.filter(t => t.expense_type === 'fixed');
@@ -113,8 +130,8 @@ export function useKPIs({
         value: totalExpense,
         icon: 'TrendingDown',
         color: 'red',
-        subtitle: expenseTransactions.length === 0 ? 'Nenhuma saída no período' : `${expenseTransactions.length} saída(s) no período`,
-        count: expenseTransactions.length
+        subtitle: expenseTransactions.length === 0 && invoicesExpense === 0 ? 'Nenhuma saída no período' : `${expenseTransactions.length + (invoicesExpense > 0 ? 1 : 0)} saída(s) no período`,
+        count: expenseTransactions.length + (invoicesExpense > 0 ? 1 : 0)
       },
       {
         key: 'fixed',
@@ -162,7 +179,7 @@ export function useKPIs({
         count: bankAccounts.length
       }
     ];
-  }, [periodTransactions, bankAccounts, dateRange]);
+  }, [periodTransactions, bankAccounts, dateRange, invoicesExpense]);
 
   return {
     kpis,
