@@ -32,7 +32,7 @@ import { DeleteTransactionDialog } from "@/components/dialogs/DeleteTransactionD
 import { KPIDetailsDialog } from "@/components/dialogs/KPIDetailsDialog";
 
 // Converter CREDIT_CARDS para array mutável
-const creditCardsArray = CREDIT_CARDS.map(card => ({ id: card.id, name: card.name }));
+const creditCardsArray = CREDIT_CARDS.map(card => ({ id: card.id, name: card.name, bank_id: card.bank_id, due_day: card.due_day }));
 
 export default function EventsPage() {
   const router = useRouter();
@@ -184,6 +184,24 @@ export default function EventsPage() {
     loading: transactionsLoading,
     invoices: allInvoices // Passa todas as invoices
   });
+
+  // Soma das faturas do período selecionado
+  const invoicesSum = (() => {
+    if (!dateRange?.start || !dateRange?.end) return 0;
+    let sum = 0;
+    allInvoices.forEach(invoice => {
+      // invoice.month formato 'YYYY-MM'
+      const [year, month] = invoice.month.split('-').map(Number);
+      // Considera o vencimento no dia do cartão (card.due_day)
+      const card = creditCards.find(c => c.id === invoice.credit_card_id);
+      const dueDay = card?.due_day || 1;
+      const dueDate = new Date(year, month - 1, dueDay);
+      if (dueDate >= dateRange.start && dueDate <= dateRange.end) {
+        sum += invoice.value;
+      }
+    });
+    return sum;
+  })();
 
   // Sincronizar projectionDate com o período selecionado (agora depois de dateRange)
   useEffect(() => {
@@ -376,7 +394,18 @@ export default function EventsPage() {
 
         {/* KPI Grid */}
         <KPIGrid
-          kpis={kpis}
+          kpis={[
+            ...kpis,
+            {
+              key: 'invoices_sum',
+              title: 'Faturas do Período',
+              value: invoicesSum,
+              color: 'blue',
+              icon: 'CreditCard',
+              subtitle: invoicesSum === 0 ? 'Nenhuma fatura no período' : '',
+              count: 0
+            }
+          ]}
           onKPIClick={setOpenKpiDialog}
           loading={loading}
           projectedBalance={projectedBalance}
@@ -415,7 +444,25 @@ export default function EventsPage() {
           onOpenChange={(open) => setOpenKpiDialog(open ? openKpiDialog : null)}
           kpiKey={openKpiDialog}
           events={timelineEvents}
-          creditCards={creditCardsArray}
+          creditCards={creditCards}
+          invoicesPeriod={(() => {
+            if (!dateRange?.start || !dateRange?.end) return [];
+            return allInvoices
+              .filter(inv => {
+                const [year, month] = inv.month.split('-').map(Number);
+                const card = creditCards.find(c => c.id === inv.credit_card_id);
+                const dueDay = card?.due_day || 1;
+                const dueDate = new Date(year, month - 1, dueDay);
+                return dueDate >= dateRange.start && dueDate <= dateRange.end;
+              })
+              .map(inv => {
+                const card = creditCards.find(c => c.id === inv.credit_card_id);
+                return {
+                  ...inv,
+                  credit_card_name: card?.name || inv.credit_card_id
+                };
+              });
+          })()}
           bankAccounts={bankAccounts}
           onAddAccount={handleAddAccount}
           onUpdateAccount={handleUpdateAccount}

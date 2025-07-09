@@ -15,7 +15,8 @@ export interface KPIDetailsDialogProps {
   onOpenChange: (open: boolean) => void;
   kpiKey: string | null;
   events: TimelineEvent[];
-  creditCards: Array<{ id: string; name: string }>;
+  creditCards: Array<{ id: string; name: string; due_day?: number }>;
+  invoicesPeriod?: Array<{ month: string; value: number; credit_card_id: string, credit_card_name: string }>; // NOVO
   // Novas props para os diferentes tipos de KPI
   bankAccounts?: BankAccount[];
   onAddAccount?: (data: CreateAccountData) => Promise<void>;
@@ -43,6 +44,7 @@ export function KPIDetailsDialog({
   kpiKey, 
   events, 
   creditCards,
+  invoicesPeriod, // Adicione prop invoicesPeriod
   bankAccounts = [],
   onAddAccount,
   onUpdateAccount,
@@ -76,7 +78,8 @@ export function KPIDetailsDialog({
       subscription: 'Detalhes das Assinaturas',
       performance: 'Detalhes da Performance do Mês',
       balance: 'Detalhes do Saldo das Contas',
-      projected: 'Detalhes do Saldo Projetado'
+      projected: 'Detalhes do Saldo Projetado',
+      invoices_sum: 'Faturas do Período'
     };
     return titles[kpiKey as keyof typeof titles] || 'Detalhes';
   };
@@ -90,7 +93,8 @@ export function KPIDetailsDialog({
       subscription: 'Soma de todas as assinaturas do período.',
       performance: 'Saldo do período (entradas - saídas).',
       balance: 'Saldo atual das contas bancárias.',
-      projected: 'Saldo projetado considerando entradas e saídas futuras.'
+      projected: 'Saldo projetado considerando entradas e saídas futuras.',
+      invoices_sum: 'Lista das faturas de cartão de crédito com vencimento no período selecionado.'
     };
     return descriptions[kpiKey as keyof typeof descriptions] || '';
   };
@@ -517,6 +521,42 @@ export function KPIDetailsDialog({
     </div>
   );
 
+  // Helper para buscar nome amigável do cartão
+  function getCardDisplayName(creditCardId: string) {
+    const card = creditCards.find(c => c.id === creditCardId);
+    // Sempre retorna o nome do cartão de crédito, se existir
+    if (card?.name) return card.name;
+    return creditCardId;
+  }
+
+  // NOVO: Renderizar detalhes das faturas do período
+  const renderInvoicesDetails = () => {
+    if (!Array.isArray(invoicesPeriod) || invoicesPeriod.length === 0) {
+      return <div className="text-muted-foreground">Nenhuma fatura encontrada no período</div>;
+    }
+    return (
+      <ul className="space-y-2">
+        {invoicesPeriod.map((inv, idx) => {
+          const [year, month] = inv.month.split('-').map(Number);
+          const card = creditCards.find(c => c.id === inv.credit_card_id);
+          const dueDay = card?.due_day || 1;
+          const dueDate = new Date(year, month - 1, dueDay);
+          return (
+            <li key={idx} className="flex justify-between items-center border-b pb-1">
+              <div>
+                <div className="font-medium">{getCardDisplayName(inv.credit_card_name)}</div>
+                <div className="text-xs text-muted-foreground">Mês: {inv.month} | Vencimento: {dueDate.toLocaleDateString('pt-BR')}</div>
+              </div>
+              <div className="font-semibold text-blue-700">
+                {inv.value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    );
+  };
+
   const renderStandardDetails = () => (
     <ul className="space-y-1">
       {filteredEvents.length === 0 ? (
@@ -562,6 +602,8 @@ export function KPIDetailsDialog({
         return renderBalanceDetails();
       case 'projected':
         return renderProjectedDetails();
+      case 'invoices_sum':
+        return renderInvoicesDetails();
       default:
         return renderStandardDetails();
     }
