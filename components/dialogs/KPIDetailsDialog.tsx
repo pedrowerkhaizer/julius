@@ -5,7 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { TimelineEvent } from '@/hooks/useTimeline';
-import { BankAccount, CreateAccountData } from '@/lib/types/finance';
+import { BankAccount, CreateAccountData, CreditCard, Transaction } from '@/lib/types/finance';
 import { AVAILABLE_BANKS, getBankName, getAccountTypeName, validateAccountData } from '@/lib/bankAccounts';
 import { toast } from 'sonner';
 import { Plus, Pencil, Trash2, Save, X, Building2, TrendingUp, TrendingDown } from 'lucide-react';
@@ -15,7 +15,7 @@ export interface KPIDetailsDialogProps {
   onOpenChange: (open: boolean) => void;
   kpiKey: string | null;
   events: TimelineEvent[];
-  creditCards: Array<{ id: string; name: string; due_day?: number }>;
+  creditCards: CreditCard[];
   invoicesPeriod?: Array<{ month: string; value: number; credit_card_id: string, credit_card_name: string }>; // NOVO
   // Novas props para os diferentes tipos de KPI
   bankAccounts?: BankAccount[];
@@ -30,6 +30,16 @@ export interface KPIDetailsDialogProps {
   onDeleteEvent?: (event: TimelineEvent, occurrenceDate?: string) => void;
   // Nova prop para adicionar transação contextual
   onAddTransactionContextual?: (context: { type: 'income' | 'expense', expenseType?: 'fixed' | 'variable' | 'subscription' }) => void;
+  transactions?: Transaction[];
+  // Adicionar prop para detalhamento do saldo projetado
+  projectedDetails?: {
+    saldoInicial: number;
+    entradas: number;
+    fixas: number;
+    variaveis: number;
+    assinaturas: number;
+    faturas: number;
+  };
 }
 
 // Função utilitária para formatar data amigável
@@ -45,6 +55,7 @@ export function KPIDetailsDialog({
   events, 
   creditCards,
   invoicesPeriod, // Adicione prop invoicesPeriod
+  transactions = [],
   bankAccounts = [],
   onAddAccount,
   onUpdateAccount,
@@ -54,7 +65,8 @@ export function KPIDetailsDialog({
   projectionDate,
   onEditEvent,
   onDeleteEvent,
-  onAddTransactionContextual
+  onAddTransactionContextual,
+  projectedDetails
 }: KPIDetailsDialogProps) {
   const [editingAccount, setEditingAccount] = useState<BankAccount | null>(null);
   const [newAccount, setNewAccount] = useState<Partial<CreateAccountData & { balance_date?: string }>>({
@@ -540,16 +552,38 @@ export function KPIDetailsDialog({
           const [year, month] = inv.month.split('-').map(Number);
           const card = creditCards.find(c => c.id === inv.credit_card_id);
           const dueDay = card?.due_day || 1;
+          // Filtrar assinaturas deste cartão usando transactions (não events)
+          const cardSubscriptions = transactions.filter(t =>
+            t.type === 'expense' &&
+            t.expense_type === 'subscription' &&
+            t.subscription_card === inv.credit_card_id &&
+            t.subscription_billing_day
+          );
           const dueDate = new Date(year, month - 1, dueDay);
           return (
-            <li key={idx} className="flex justify-between items-center border-b pb-1">
-              <div>
-                <div className="font-medium">{getCardDisplayName(inv.credit_card_name)}</div>
-                <div className="text-xs text-muted-foreground">Mês: {inv.month} | Vencimento: {dueDate.toLocaleDateString('pt-BR')}</div>
+            <li key={idx} className="border-b pb-1">
+              <div className="flex justify-between items-center">
+                <div>
+                  <div className="font-medium">{getCardDisplayName(inv.credit_card_name)}</div>
+                  <div className="text-xs text-muted-foreground">Mês: {inv.month} | Vencimento: {dueDate.toLocaleDateString('pt-BR')}</div>
+                </div>
+                <div className="font-semibold text-blue-700">
+                  {inv.value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                </div>
               </div>
-              <div className="font-semibold text-blue-700">
-                {inv.value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-              </div>
+              {/* Assinaturas */}
+              {cardSubscriptions.length > 0 && (
+                <div className="text-xs mt-2 ml-2">
+                  <div className="font-semibold text-blue-700">Assinaturas deste cartão:</div>
+                  <ul className="list-disc ml-5">
+                    {cardSubscriptions.map(sub => (
+                      <li key={sub.id + inv.month}>
+                        {sub.description} (R$ {sub.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}) - Cobrança dia {sub.subscription_billing_day}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </li>
           );
         })}
@@ -609,6 +643,31 @@ export function KPIDetailsDialog({
     }
   };
 
+  // Novo: Detalhamento customizado para saldo projetado, dentro do DialogContent
+  const renderProjectedCustomDetails = () => {
+    if (kpiKey === 'projected' && projectedDetails) {
+      const { saldoInicial, entradas, fixas, variaveis, assinaturas, faturas } = projectedDetails;
+      const saldoFinal = saldoInicial + entradas - fixas - variaveis - assinaturas - faturas;
+      return (
+        <div className="space-y-4">
+          <h3 className="font-semibold text-lg">Detalhamento do Saldo Projetado</h3>
+          <table className="min-w-full bg-background border rounded-lg">
+            <tbody>
+              <tr><td className="px-4 py-2">Saldo inicial das contas</td><td className="px-4 py-2 text-right">{saldoInicial.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</td></tr>
+              <tr><td className="px-4 py-2">Entradas previstas</td><td className="px-4 py-2 text-right text-green-600">+{entradas.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</td></tr>
+              <tr><td className="px-4 py-2">Saídas fixas</td><td className="px-4 py-2 text-right text-red-600">-{fixas.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</td></tr>
+              <tr><td className="px-4 py-2">Saídas variáveis</td><td className="px-4 py-2 text-right text-red-600">-{variaveis.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</td></tr>
+              <tr><td className="px-4 py-2">Assinaturas</td><td className="px-4 py-2 text-right text-red-600">-{assinaturas.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</td></tr>
+              <tr><td className="px-4 py-2">Faturas de cartão</td><td className="px-4 py-2 text-right text-red-600">-{faturas.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</td></tr>
+              <tr className="font-bold border-t"><td className="px-4 py-2">Saldo projetado final</td><td className="px-4 py-2 text-right">{saldoFinal.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</td></tr>
+            </tbody>
+          </table>
+        </div>
+      );
+    }
+    return null;
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
@@ -642,7 +701,8 @@ export function KPIDetailsDialog({
           {getDescription()}
         </div>
         
-        {renderContent()}
+        {/* Detalhamento customizado para saldo projetado */}
+        {kpiKey === 'projected' && projectedDetails ? renderProjectedCustomDetails() : renderContent()}
       </DialogContent>
     </Dialog>
   );

@@ -10,6 +10,7 @@ import { CREDIT_CARDS } from "@/lib/utils/constants";
 // Custom hooks
 import { useKPIs } from "@/hooks/useKPIs";
 import { useTimeline } from "@/hooks/useTimeline";
+import { useRecurrenceExceptions } from "@/hooks/useRecurrenceExceptions";
 import { useTransactions } from "@/hooks/useTransactions";
 import { useBankAccounts } from "@/hooks/useBankAccounts";
 import { useUserProfile } from "@/hooks/useUserProfile";
@@ -30,9 +31,6 @@ import { TransactionDialog } from "@/components/dialogs/TransactionDialog";
 import { EditTransactionDialog } from "@/components/dialogs/EditTransactionDialog";
 import { DeleteTransactionDialog } from "@/components/dialogs/DeleteTransactionDialog";
 import { KPIDetailsDialog } from "@/components/dialogs/KPIDetailsDialog";
-
-// Converter CREDIT_CARDS para array mutável
-const creditCardsArray = CREDIT_CARDS.map(card => ({ id: card.id, name: card.name, bank_id: card.bank_id, due_day: card.due_day }));
 
 export default function EventsPage() {
   const router = useRouter();
@@ -81,6 +79,9 @@ export default function EventsPage() {
   } = useCreditCards(userId || '');
   const [cardInvoices, setCardInvoices] = useState<Record<string, any[]>>({});
   const [invoicesLoading, setInvoicesLoading] = useState<Record<string, boolean>>({});
+
+  // Exceções de recorrência
+  const { exceptions: recurrenceExceptions, loading: recurrenceLoading, loadExceptions } = useRecurrenceExceptions();
 
   // Buscar userId ao carregar user
   useEffect(() => {
@@ -174,15 +175,37 @@ export default function EventsPage() {
   // Juntar todas as invoices de todos os cartões
   const allInvoices = Object.values(cardInvoices).flat();
 
-  // Chamada única de useKPIs, passando todas as invoices
-  const { kpis, dateRange, loading: kpisLoading } = useKPIs({
+  // Primeiro, calcula o dateRange com useKPIs (sem timelineEvents)
+  const { dateRange } = useKPIs({
     transactions,
     bankAccounts,
     period,
     customStart,
     customEnd,
     loading: transactionsLoading,
-    invoices: allInvoices // Passa todas as invoices
+    invoices: allInvoices
+  });
+
+  // Depois, gera os eventos da timeline já com o dateRange correto
+  const { timelineEvents, groupedEvents, loading: timelineLoading } = useTimeline({
+    transactions,
+    dateRange,
+    loading: transactionsLoading || recurrenceLoading,
+    invoices: allInvoices, // NOVO
+    creditCards, // NOVO
+    recurrenceExceptions
+  });
+
+  // Por fim, calcula os KPIs finais usando os eventos da timeline
+  const { kpis, loading: kpisLoading } = useKPIs({
+    transactions,
+    bankAccounts,
+    period,
+    customStart,
+    customEnd,
+    loading: transactionsLoading,
+    invoices: allInvoices,
+    timelineEvents // NOVO: KPIs batem com a timeline
   });
 
   // Soma das faturas do período selecionado
@@ -312,6 +335,8 @@ export default function EventsPage() {
           editingEvent.transactionIdOriginal,
           editingEvent.occurrenceDate
         );
+        // Recarrega exceções imediatamente após deletar
+        await loadExceptions();
       } else {
         await deleteTransaction(editingEvent.transactionIdOriginal);
       }
@@ -363,15 +388,59 @@ export default function EventsPage() {
     }
   };
 
-  const { timelineEvents, groupedEvents, loading: timelineLoading } = useTimeline({
-    transactions,
-    dateRange,
-    loading: transactionsLoading,
-    invoices: allInvoices, // NOVO
-    creditCards // NOVO
-  });
-
   const loading = userLoading || transactionsLoading || kpisLoading || timelineLoading;
+
+  // Calcular detalhamento do saldo projetado
+  const projectedDetails = (() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const projectionDateObj = new Date(projectionDate);
+    projectionDateObj.setHours(23, 59, 59, 999);
+    let saldoInicial = bankAccounts.reduce((sum, account) => sum + account.balance, 0);
+    let entradas = 0;
+    let fixas = 0;
+    let variaveis = 0;
+    let assinaturas = 0;
+    let faturas = 0;
+    transactions.forEach(transaction => {
+      if (transaction.is_recurring && transaction.day) {
+        let cursor = new Date(today);
+        while (cursor <= projectionDateObj) {
+          const occurrenceDate = new Date(cursor.getFullYear(), cursor.getMonth(), transaction.day);
+          if (occurrenceDate >= today && occurrenceDate <= projectionDateObj) {
+            if (transaction.type === 'income') entradas += transaction.amount;
+            if (transaction.type === 'expense') {
+              if (transaction.expense_type === 'fixed') fixas += transaction.amount;
+              else if (transaction.expense_type === 'variable') variaveis += transaction.amount;
+              else if (transaction.expense_type === 'subscription') assinaturas += transaction.amount;
+            }
+          }
+          cursor.setMonth(cursor.getMonth() + 1);
+        }
+      } else if (transaction.date) {
+        const transactionDate = new Date(transaction.date);
+        if (transactionDate >= today && transactionDate <= projectionDateObj) {
+          if (transaction.type === 'income') entradas += transaction.amount;
+          if (transaction.type === 'expense') {
+            if (transaction.expense_type === 'fixed') fixas += transaction.amount;
+            else if (transaction.expense_type === 'variable') variaveis += transaction.amount;
+            else if (transaction.expense_type === 'subscription') assinaturas += transaction.amount;
+          }
+        }
+      }
+    });
+    creditCards.forEach(card => {
+      const invoices = cardInvoices[card.id] || [];
+      invoices.forEach(invoice => {
+        const [year, month] = invoice.month.split('-').map(Number);
+        const dueDate = new Date(year, month - 1, card.due_day, 12);
+        if (dueDate >= today && dueDate <= projectionDateObj) {
+          faturas += invoice.value;
+        }
+      });
+    });
+    return { saldoInicial, entradas, fixas, variaveis, assinaturas, faturas };
+  })();
 
   return (
     <div className="min-h-screen bg-background">
@@ -394,18 +463,26 @@ export default function EventsPage() {
 
         {/* KPI Grid */}
         <KPIGrid
-          kpis={[
-            ...kpis,
-            {
+          kpis={(() => {
+            // Remove o KPI de assinaturas e insere o de faturas na mesma posição
+            const kpisWithoutSubscription = kpis.filter(kpi => kpi.key !== 'subscription');
+            const subscriptionIndex = kpis.findIndex(kpi => kpi.key === 'subscription');
+            const invoicesKPI = {
               key: 'invoices_sum',
               title: 'Faturas do Período',
               value: invoicesSum,
-              color: 'blue',
+              color: 'blue' as const,
               icon: 'CreditCard',
               subtitle: invoicesSum === 0 ? 'Nenhuma fatura no período' : '',
               count: 0
+            };
+            if (subscriptionIndex >= 0) {
+              kpisWithoutSubscription.splice(subscriptionIndex, 0, invoicesKPI);
+              return kpisWithoutSubscription;
             }
-          ]}
+            // Se não achar, adiciona no final
+            return [...kpisWithoutSubscription, invoicesKPI];
+          })()}
           onKPIClick={setOpenKpiDialog}
           loading={loading}
           projectedBalance={projectedBalance}
@@ -416,7 +493,7 @@ export default function EventsPage() {
         <Timeline
           events={timelineEvents}
           groupedEvents={groupedEvents}
-          creditCards={creditCardsArray}
+          creditCards={creditCards}
           loading={loading}
           onEdit={handleEdit}
           onDelete={handleDelete}
@@ -463,11 +540,13 @@ export default function EventsPage() {
                 };
               });
           })()}
+          transactions={transactions}
           bankAccounts={bankAccounts}
           onAddAccount={handleAddAccount}
           onUpdateAccount={handleUpdateAccount}
           onDeleteAccount={handleDeleteAccount}
           projectedBalance={projectedBalance}
+          projectedDetails={projectedDetails}
           onProjectionDateChange={setProjectionDate}
           projectionDate={projectionDate}
           onEditEvent={handleEdit}
@@ -505,19 +584,59 @@ export default function EventsPage() {
             setShowContextualDialog({ open: true, type: 'income' });
           }}
         />
-        {/* Faturas dos cartões de crédito */}
         {creditCards.length > 0 && (
-          <div className="mt-8 space-y-8">
-            <h3 className="font-semibold text-lg">Próximas Faturas de Cartão de Crédito</h3>
-            {creditCards.map(card => (
-              <CreditCardInvoices
-                key={card.id}
-                card={card}
-                invoices={cardInvoices[card.id] || []}
-                loading={!!invoicesLoading[card.id]}
-                onSave={invoice => handleSaveInvoice(card.id, invoice)}
-              />
-            ))}
+          <div className="mt-8">
+            <h3 className="font-semibold text-lg mb-4">Próximas Faturas de Cartão de Crédito</h3>
+            <div className="overflow-x-auto">
+              <table className="min-w-full bg-background border rounded-lg">
+                <thead>
+                  <tr>
+                    <th className="px-4 py-2 text-left">Mês de Vencimento</th>
+                    <th className="px-4 py-2 text-left">Banco</th>
+                    <th className="px-4 py-2 text-right">Valor</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {/* Agrupar por mês de vencimento */}
+                  {(() => {
+                    // Monta um mapa: { 'YYYY-MM': [ { card, invoice, dueDate } ] }
+                    const grouped: Record<string, Array<{ card: any, invoice: any, dueDate: Date }>> = {};
+                    creditCards.forEach(card => {
+                      (cardInvoices[card.id] || []).forEach(invoice => {
+                        const [year, month] = invoice.month.split('-').map(Number);
+                        const dueDate = new Date(year, month - 1, card.due_day);
+                        const key = `${year}-${String(month).padStart(2, '0')}`;
+                        if (!grouped[key]) grouped[key] = [];
+                        grouped[key].push({ card, invoice, dueDate });
+                      });
+                    });
+                    // Ordena os meses
+                    const sortedMonths = Object.keys(grouped).sort();
+                    return sortedMonths.flatMap(monthKey => {
+                      const rows = grouped[monthKey]
+                        .sort((a, b) => a.dueDate.getTime() - b.dueDate.getTime());
+                      const subtotal = rows.reduce((sum, r) => sum + r.invoice.value, 0);
+                      return [
+                        <tr key={monthKey + '-header'}>
+                          <td colSpan={3} className="px-4 py-2 font-semibold bg-muted">{new Date(monthKey + '-01').toLocaleString('pt-BR', { month: 'long', year: 'numeric' })}</td>
+                        </tr>,
+                        ...rows.map((r, idx) => (
+                          <tr key={r.card.id + r.invoice.month} className={idx % 2 === 0 ? 'bg-background' : 'bg-muted'}>
+                            <td className="px-4 py-2">{r.dueDate.toLocaleDateString('pt-BR')}</td>
+                            <td className="px-4 py-2">{r.card.name}</td>
+                            <td className="px-4 py-2 text-right font-semibold">{r.invoice.value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</td>
+                          </tr>
+                        )),
+                        <tr key={monthKey + '-subtotal'}>
+                          <td colSpan={2} className="px-4 py-2 text-right font-semibold">Subtotal do mês:</td>
+                          <td className="px-4 py-2 text-right font-bold">{subtotal.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</td>
+                        </tr>
+                      ];
+                    });
+                  })()}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
       </div>

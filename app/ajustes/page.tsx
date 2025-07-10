@@ -30,6 +30,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { CreditCardList } from '@/components/credit-cards/CreditCardList';
 import { useCreditCards } from '@/hooks/useCreditCards';
 import { CreditCardInvoices } from '@/components/credit-cards/CreditCardInvoices';
+import { useTransactions } from '@/hooks/useTransactions';
 
 const notificationTypes = [
   {
@@ -379,6 +380,9 @@ export default function AjustesPage() {
   const handleCancelAccountEdit = () => {
     setEditingAccount(null);
   };
+
+  // Adicionar hook para transações (assinaturas)
+  const { transactions, loading: transactionsLoading } = useTransactions();
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center py-8">
@@ -782,6 +786,7 @@ export default function AjustesPage() {
                       invoices={cardInvoices[card.id] || []}
                       loading={!!invoicesLoading[card.id]}
                       onSave={invoice => handleSaveInvoice(card.id, invoice)}
+                      transactions={transactions} // Passa as transações para o componente
                     />
                   ))}
                 </div>

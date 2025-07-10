@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Transaction, CreditCardInvoice, CreditCard } from '@/lib/types/finance';
+import { Transaction, CreditCardInvoice, CreditCard, RecurrenceException } from '@/lib/types/finance';
 import { addMonths, isWithinInterval, parseISO } from 'date-fns';
 
 export interface TimelineEvent {
@@ -23,9 +23,10 @@ export interface UseTimelineProps {
   loading: boolean;
   invoices?: CreditCardInvoice[]; // NOVO
   creditCards?: CreditCard[]; // NOVO
+  recurrenceExceptions?: RecurrenceException[]; // NOVO
 }
 
-export function useTimeline({ transactions, dateRange, loading, invoices = [], creditCards = [] }: UseTimelineProps) {
+export function useTimeline({ transactions, dateRange, loading, invoices = [], creditCards = [], recurrenceExceptions = [] }: UseTimelineProps) {
   const timelineEvents = useMemo(() => {
     if (loading) return [];
 
@@ -34,43 +35,45 @@ export function useTimeline({ transactions, dateRange, loading, invoices = [], c
       .flatMap(transaction => {
         const occurrences: TimelineEvent[] = [];
         let cursor = new Date(dateRange.start);
-        
         while (cursor <= dateRange.end) {
           if (transaction.recurrence_end_date && new Date(transaction.recurrence_end_date) < cursor) {
             break;
           }
-          
           let dateObj: Date;
-          
           if (transaction.expense_type === "subscription" && transaction.subscription_billing_day && transaction.subscription_card_due_day) {
             const cardDueDay = transaction.subscription_card_due_day;
             const year = cursor.getFullYear();
             const month = cursor.getMonth();
-            dateObj = new Date(year, month, cardDueDay, 12); // Meio-dia para evitar fuso
+            dateObj = new Date(year, month, cardDueDay, 12);
           } else {
-            dateObj = new Date(cursor.getFullYear(), cursor.getMonth(), transaction.day!, 12); // Meio-dia para evitar fuso
+            dateObj = new Date(cursor.getFullYear(), cursor.getMonth(), transaction.day!, 12);
           }
-          
           if (isWithinInterval(dateObj, { start: dateRange.start, end: dateRange.end })) {
-            occurrences.push({
-              id: `${transaction.id}-${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, '0')}-${String(dateObj.getDate()).padStart(2, '0')}`,
-              description: transaction.description,
-              amount: transaction.amount,
-              type: transaction.type,
-              expenseType: transaction.expense_type,
-              dateObj,
-              dateStr: `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, '0')}-${String(dateObj.getDate()).padStart(2, '0')}`,
-              isRecurring: true,
-              transactionIdOriginal: transaction.id,
-              subscriptionCard: transaction.subscription_card,
-              subscriptionBillingDay: transaction.subscription_billing_day,
-              subscriptionCardDueDay: transaction.subscription_card_due_day,
-            });
+            // Verifica se existe exceção de delete para essa transação/data
+            const hasDeleteException = recurrenceExceptions.some(ex =>
+              ex.transaction_id === transaction.id &&
+              ex.date === `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, '0')}-${String(dateObj.getDate()).padStart(2, '0')}` &&
+              ex.action === 'delete'
+            );
+            if (!hasDeleteException) {
+              occurrences.push({
+                id: `${transaction.id}-${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, '0')}-${String(dateObj.getDate()).padStart(2, '0')}`,
+                description: transaction.description,
+                amount: transaction.amount,
+                type: transaction.type,
+                expenseType: transaction.expense_type,
+                dateObj,
+                dateStr: `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, '0')}-${String(dateObj.getDate()).padStart(2, '0')}`,
+                isRecurring: true,
+                transactionIdOriginal: transaction.id,
+                subscriptionCard: transaction.subscription_card,
+                subscriptionBillingDay: transaction.subscription_billing_day,
+                subscriptionCardDueDay: transaction.subscription_card_due_day,
+              });
+            }
           }
-          
           cursor = addMonths(cursor, 1);
         }
-        
         return occurrences;
       });
 
@@ -117,7 +120,7 @@ export function useTimeline({ transactions, dateRange, loading, invoices = [], c
     allEvents.sort((a, b) => a.dateObj.getTime() - b.dateObj.getTime());
 
     return allEvents;
-  }, [transactions, dateRange, loading, invoices, creditCards]);
+  }, [transactions, dateRange, loading, invoices, creditCards, recurrenceExceptions]);
 
   // Group events by date for timeline display
   const groupedEvents = useMemo(() => {

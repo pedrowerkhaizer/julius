@@ -20,6 +20,20 @@ export interface UseKPIsProps {
   customEnd?: string;
   loading: boolean;
   invoices?: CreditCardInvoice[]; // NOVO
+  timelineEvents?: Array<{
+    id: string;
+    description: string;
+    amount: number;
+    type: 'income' | 'expense';
+    expenseType?: 'fixed' | 'variable' | 'subscription';
+    dateObj: Date;
+    dateStr: string;
+    isRecurring: boolean;
+    transactionIdOriginal: string;
+    subscriptionCard?: string;
+    subscriptionBillingDay?: number;
+    subscriptionCardDueDay?: number;
+  }>;
 }
 
 export function useKPIs({ 
@@ -29,7 +43,8 @@ export function useKPIs({
   customStart, 
   customEnd, 
   loading,
-  invoices = [] // NOVO
+  invoices = [],
+  timelineEvents // NOVO
 }: UseKPIsProps) {
   const today = new Date();
 
@@ -55,18 +70,26 @@ export function useKPIs({
     return { start: rangeStart, end: rangeEnd };
   }, [period, customStart, customEnd]);
 
-  // Filter transactions for the current period
+  // NOVO: Se timelineEvents for fornecido, filtrar eventos do período a partir dela
   const periodTransactions = useMemo(() => {
+    if (timelineEvents) {
+      return timelineEvents.filter(event =>
+        isWithinInterval(event.dateObj, { start: dateRange.start, end: dateRange.end })
+      ).map(event => ({
+        type: event.type,
+        expense_type: event.expenseType,
+        amount: event.amount
+      }));
+    }
+    // fallback: lógica antiga
     return transactions.filter(transaction => {
       if (transaction.is_recurring) {
-        // For recurring transactions, check if they fall within the period
         if (transaction.day) {
           const transactionDate = new Date(dateRange.start.getFullYear(), dateRange.start.getMonth(), transaction.day);
           return isWithinInterval(transactionDate, { start: dateRange.start, end: dateRange.end });
         }
         return false;
       } else {
-        // For one-time transactions, check the specific date
         if (transaction.date) {
           const transactionDate = parseISO(transaction.date);
           return isWithinInterval(transactionDate, { start: dateRange.start, end: dateRange.end });
@@ -74,7 +97,7 @@ export function useKPIs({
         return false;
       }
     });
-  }, [transactions, dateRange]);
+  }, [transactions, dateRange, timelineEvents]);
 
   // NOVO: Somar faturas de cartão de crédito do período como saída
   const invoicesExpense = useMemo(() => {
@@ -97,7 +120,7 @@ export function useKPIs({
     const expenseTransactions = periodTransactions.filter(t => t.type === 'expense');
     
     const totalIncome = incomeTransactions.reduce((sum, t) => sum + t.amount, 0);
-    const totalExpense = expenseTransactions.reduce((sum, t) => sum + t.amount, 0) + invoicesExpense; // SOMA AS FATURAS
+    const totalExpense = expenseTransactions.reduce((sum, t) => sum + t.amount, 0); // NÃO soma as faturas
     const monthPerformance = totalIncome - totalExpense;
     
     const fixedExpenses = expenseTransactions.filter(t => t.expense_type === 'fixed');
