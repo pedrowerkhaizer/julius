@@ -1,9 +1,19 @@
-import { createClient } from '@supabase/supabase-js';
+import { createBrowserClient } from '@supabase/ssr';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey); 
+// Debug: verificar se as variáveis estão definidas
+console.log('Supabase URL:', supabaseUrl ? 'Definida' : 'NÃO DEFINIDA');
+console.log('Supabase Anon Key:', supabaseAnonKey ? 'Definida' : 'NÃO DEFINIDA');
+
+if (!supabaseUrl || !supabaseAnonKey) {
+  console.error('❌ Variáveis de ambiente do Supabase não estão configuradas!');
+  console.error('NEXT_PUBLIC_SUPABASE_URL:', supabaseUrl);
+  console.error('NEXT_PUBLIC_SUPABASE_ANON_KEY:', supabaseAnonKey ? '***' : 'NÃO DEFINIDA');
+}
+
+export const supabase = createBrowserClient(supabaseUrl, supabaseAnonKey);
 
 // Função para buscar perfil do usuário
 export async function getUserProfile(userId: string) {

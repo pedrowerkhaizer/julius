@@ -9,6 +9,7 @@ const router = express.Router();
 const creditCardSchema = z.object({
   name: z.string().min(1, 'Nome do cartão é obrigatório'),
   bank: z.string().min(1, 'Banco é obrigatório'),
+  bank_id: z.string().min(1, 'ID do banco é obrigatório'),
   due_day: z.number().min(1).max(31, 'Dia de vencimento deve estar entre 1 e 31'),
   limit: z.number().optional(),
   closing_day: z.number().min(1).max(31).optional()
@@ -64,6 +65,7 @@ router.post('/', authenticateUser, async (req, res) => {
       .from('credit_cards')
       .insert([{
         ...cardData,
+        bank_id: cardData.bank_id || cardData.bank, // Usar bank_id se fornecido, senão usar bank
         user_id: userId,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()

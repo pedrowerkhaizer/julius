@@ -18,15 +18,31 @@ export default function LoginPage() {
   const [error, setError] = useState("");
 
   const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
+    // e.preventDefault();
+    console.log('🔐 Tentando fazer login...');
+    console.log('Email:', email);
+    console.log('Password:', password ? '***' : 'NÃO DEFINIDA');
+    
     setLoading(true);
     setError("");
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    setLoading(false);
-    if (error) {
-      setError(error.message);
-    } else {
-      router.push("/home");
+    
+    try {
+      console.log('📡 Chamando supabase.auth.signInWithPassword...');
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      console.log('📡 Resposta do Supabase:', error ? 'ERRO' : 'SUCESSO');
+      
+      setLoading(false);
+      if (error) {
+        console.error('❌ Erro no login:', error);
+        setError(error.message);
+      } else {
+        console.log('✅ Login realizado com sucesso!');
+        router.push("/home");
+      }
+    } catch (err) {
+      console.error('❌ Erro inesperado no login:', err);
+      setLoading(false);
+      setError('Erro inesperado ao fazer login');
     }
   };
 

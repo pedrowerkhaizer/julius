@@ -5,9 +5,10 @@ export interface CreditCard {
   id: string;
   name: string;
   bank: string;
+  bank_id: string; // Adicionando campo obrigatório
   due_day: number;
   limit?: number;
-  closing_day?: number;
+  closing_day: number; // Tornando obrigatório
   user_id: string;
   created_at: string;
   updated_at: string;
@@ -25,6 +26,7 @@ export interface CreditCardInvoice {
 export interface CreateCreditCardData {
   name: string;
   bank: string;
+  bank_id: string;
   due_day: number;
   limit?: number;
   closing_day?: number;
@@ -49,12 +51,12 @@ export function useCreditCardsRefactored() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const { data: cardsData, loading: fetchLoading, error: fetchError, refetch } = useApi<{ success: boolean; data: CreditCard[] }>('/api/credit-cards');
+  const { data: cardsData, loading: fetchLoading, error: fetchError, refetch } = useApi<CreditCard[]>('/api/credit-cards');
 
   // Atualizar estado local quando dados da API mudarem
   useEffect(() => {
-    if (cardsData?.success) {
-      setCards(cardsData.data || []);
+    if (cardsData?.success && cardsData.data) {
+      setCards(cardsData.data);
     }
   }, [cardsData]);
 

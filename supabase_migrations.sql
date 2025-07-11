@@ -334,6 +334,89 @@ INSERT INTO user_onboarding (user_id, payment_day, card_due_day, onboarding_comp
 -- SELECT trigger_name, event_manipulation, event_object_table, action_statement FROM information_schema.triggers WHERE event_object_table IN ('bank_accounts', 'user_onboarding');
 
 -- =====================================================
+-- TABELAS DE CARTÕES DE CRÉDITO
+-- =====================================================
+
+-- Tabela de cartões de crédito
+CREATE TABLE IF NOT EXISTS credit_cards (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  bank TEXT NOT NULL,
+  bank_id TEXT NOT NULL, -- ID do banco para compatibilidade
+  due_day INTEGER NOT NULL CHECK (due_day >= 1 AND due_day <= 31),
+  closing_day INTEGER CHECK (closing_day >= 1 AND closing_day <= 31),
+  limit DECIMAL(10,2),
+  color TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
+);
+
+-- Índices para cartões de crédito
+CREATE INDEX IF NOT EXISTS idx_credit_cards_user ON credit_cards(user_id);
+CREATE INDEX IF NOT EXISTS idx_credit_cards_created ON credit_cards(created_at);
+CREATE INDEX IF NOT EXISTS idx_credit_cards_bank ON credit_cards(bank);
+
+-- Trigger para atualizar updated_at
+CREATE TRIGGER set_credit_cards_updated_at
+  BEFORE UPDATE ON credit_cards
+  FOR EACH ROW
+  EXECUTE FUNCTION set_updated_at();
+
+-- Política RLS para cartões de crédito
+ALTER TABLE credit_cards ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can view their own credit cards" ON credit_cards
+  FOR SELECT USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can insert their own credit cards" ON credit_cards
+  FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can update their own credit cards" ON credit_cards
+  FOR UPDATE USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can delete their own credit cards" ON credit_cards
+  FOR DELETE USING (auth.uid() = user_id);
+
+-- Tabela de faturas de cartão de crédito
+CREATE TABLE IF NOT EXISTS credit_card_invoices (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  credit_card_id UUID NOT NULL REFERENCES credit_cards(id) ON DELETE CASCADE,
+  month TEXT NOT NULL CHECK (month ~ '^\d{4}-\d{2}$'), -- Formato YYYY-MM
+  value DECIMAL(10,2) NOT NULL CHECK (value >= 0),
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()),
+  UNIQUE(credit_card_id, month)
+);
+
+-- Índices para faturas
+CREATE INDEX IF NOT EXISTS idx_credit_card_invoices_user ON credit_card_invoices(user_id);
+CREATE INDEX IF NOT EXISTS idx_credit_card_invoices_card ON credit_card_invoices(credit_card_id);
+CREATE INDEX IF NOT EXISTS idx_credit_card_invoices_month ON credit_card_invoices(month);
+
+-- Trigger para atualizar updated_at
+CREATE TRIGGER set_credit_card_invoices_updated_at
+  BEFORE UPDATE ON credit_card_invoices
+  FOR EACH ROW
+  EXECUTE FUNCTION set_updated_at();
+
+-- Política RLS para faturas
+ALTER TABLE credit_card_invoices ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can view their own credit card invoices" ON credit_card_invoices
+  FOR SELECT USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can insert their own credit card invoices" ON credit_card_invoices
+  FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can update their own credit card invoices" ON credit_card_invoices
+  FOR UPDATE USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can delete their own credit card invoices" ON credit_card_invoices
+  FOR DELETE USING (auth.uid() = user_id);
+
+-- =====================================================
 -- ROLLBACK (se necessário)
 -- =====================================================
 
@@ -341,6 +424,8 @@ INSERT INTO user_onboarding (user_id, payment_day, card_due_day, onboarding_comp
 -- Para reverter todas as mudanças:
 DROP TABLE IF EXISTS user_onboarding CASCADE;
 DROP TABLE IF EXISTS bank_accounts CASCADE;
+DROP TABLE IF EXISTS credit_card_invoices CASCADE;
+DROP TABLE IF EXISTS credit_cards CASCADE;
 DROP VIEW IF EXISTS user_accounts_summary;
 DROP FUNCTION IF EXISTS get_user_total_balance(UUID);
 DROP FUNCTION IF EXISTS get_user_bank_accounts(UUID);
