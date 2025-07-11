@@ -11,19 +11,9 @@ import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { toast } from "sonner";
 import { User2, MessageCircle, Calendar, BarChart2, Bell, ArrowLeft, Upload, Trash2, Plus, Building2, Pencil } from "lucide-react";
 import { useRouter } from "next/navigation";
-import {
-  getUserBankAccounts,
-  createBankAccount,
-  updateBankAccount,
-  deleteBankAccount,
-  validateAccountData,
-  AVAILABLE_BANKS,
-  getBankName,
-  getAccountTypeName,
-  BankAccount,
-  CreateAccountData,
-  UpdateAccountData
-} from "@/lib/bankAccounts";
+import { useBankAccountsRefactored, BankAccount, CreateBankAccountData, UpdateBankAccountData } from "@/hooks/useBankAccountsRefactored";
+import { useCreditCardsRefactored } from "@/hooks/useCreditCardsRefactored";
+import { AVAILABLE_BANKS, getBankName, getAccountTypeName, validateAccountData } from "@/lib/bankAccounts";
 import { supabase } from "@/lib/supabaseClient";
 import { getUserProfile, updateUserProfile, createUserProfile } from '@/lib/supabaseClient';
 import { Skeleton } from "@/components/ui/skeleton";
@@ -129,10 +119,7 @@ export default function AjustesPage() {
   const router = useRouter();
 
   // Estados para contas bancárias
-  const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
-  const [accountsLoading, setAccountsLoading] = useState(true);
-  const [accountsError, setAccountsError] = useState<string | null>(null);
-  const [newAccount, setNewAccount] = useState<Partial<CreateAccountData & { balance_date?: string }>>({
+  const [newAccount, setNewAccount] = useState<Partial<CreateBankAccountData & { balance_date?: string }>>({
     name: '',
     bank: '',
     account_type: 'checking',
@@ -142,6 +129,9 @@ export default function AjustesPage() {
   const [showAddAccount, setShowAddAccount] = useState(false);
   const [editingAccount, setEditingAccount] = useState<BankAccount | null>(null);
   const [savingAccount, setSavingAccount] = useState(false);
+
+  // Hook para contas bancárias
+  const { accounts: bankAccounts, loading: accountsLoading, error: accountsError, addAccount, updateAccount, deleteAccount } = useBankAccountsRefactored();
 
   // Adicionar estado de carregamento do perfil
   const [profileLoading, setProfileLoading] = useState(true);
@@ -185,22 +175,7 @@ export default function AjustesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Carregar contas do Supabase ao abrir a tela
-  useEffect(() => {
-    async function loadAccounts() {
-      setAccountsLoading(true);
-      setAccountsError(null);
-      try {
-        const accounts = await getUserBankAccounts();
-        setBankAccounts(accounts);
-      } catch (err: any) {
-        setAccountsError(err.message || 'Erro ao carregar contas bancárias');
-      } finally {
-        setAccountsLoading(false);
-      }
-    }
-    loadAccounts();
-  }, []);
+
 
   // Hook dos cartões de crédito
   const {
@@ -211,7 +186,7 @@ export default function AjustesPage() {
     deleteCard,
     getInvoices,
     upsertInvoice
-  } = useCreditCards(userId || '');
+  } = useCreditCardsRefactored();
 
   // Estado para faturas de cada cartão
   const [cardInvoices, setCardInvoices] = useState<Record<string, any[]>>({});
@@ -239,11 +214,9 @@ export default function AjustesPage() {
 
   // Função para salvar/editar fatura
   const handleSaveInvoice = async (cardId: string, invoice: { month: string; value: number }) => {
-    if (!userId) return;
     setInvoicesLoading(prev => ({ ...prev, [cardId]: true }));
     try {
       await upsertInvoice({
-        user_id: userId,
         credit_card_id: cardId,
         month: invoice.month,
         value: invoice.value,
@@ -309,14 +282,13 @@ export default function AjustesPage() {
     }
     setSavingAccount(true);
     try {
-      const created = await createBankAccount({
+      await addAccount({
         name: newAccount.name!,
         bank: newAccount.bank!,
         account_type: newAccount.account_type as 'checking' | 'savings',
         balance: Number(newAccount.balance),
         balance_date: newAccount.balance_date || new Date().toISOString().split('T')[0]
       });
-      setBankAccounts(prev => [...prev, created]);
       setNewAccount({ name: '', bank: '', account_type: 'checking', balance: 0 });
       setShowAddAccount(false);
       toast.success('Conta adicionada com sucesso!');
@@ -331,8 +303,7 @@ export default function AjustesPage() {
   const handleRemoveAccount = async (id: string) => {
     setSavingAccount(true);
     try {
-      await deleteBankAccount(id);
-      setBankAccounts(prev => prev.filter(account => account.id !== id));
+      await deleteAccount(id);
       toast.success('Conta removida com sucesso!');
     } catch (err: any) {
       toast.error(err.message || 'Erro ao remover conta');
@@ -360,14 +331,13 @@ export default function AjustesPage() {
     }
     setSavingAccount(true);
     try {
-      const updated = await updateBankAccount(updatedAccount.id, {
+      await updateAccount(updatedAccount.id, {
         name: updatedAccount.name,
         bank: updatedAccount.bank,
         account_type: updatedAccount.account_type,
         balance: Number(updatedAccount.balance),
         balance_date: updatedAccount.balance_date
       });
-      setBankAccounts(prev => prev.map(account => account.id === updated.id ? updated : account));
       setEditingAccount(null);
       toast.success('Conta atualizada com sucesso!');
     } catch (err: any) {
@@ -771,8 +741,7 @@ export default function AjustesPage() {
                   cards={creditCards}
                   loading={creditCardsLoading}
                   onCreate={async (card) => {
-                    if (!userId) return;
-                    await createCard({ ...card, user_id: userId });
+                    await createCard(card);
                   }}
                   onUpdate={updateCard}
                   onDelete={deleteCard}

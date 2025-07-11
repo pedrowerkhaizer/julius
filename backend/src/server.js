@@ -10,6 +10,9 @@ const kpiRoutes = require('./routes/kpis');
 const balanceRoutes = require('./routes/balance');
 const simulationRoutes = require('./routes/simulation');
 const transactionRoutes = require('./routes/transactions');
+const bankAccountRoutes = require('./routes/bank-accounts');
+const creditCardRoutes = require('./routes/credit-cards');
+const timelineRoutes = require('./routes/timeline');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -51,6 +54,9 @@ app.use('/api/kpis', kpiRoutes);
 app.use('/api/balance', balanceRoutes);
 app.use('/api/simulation', simulationRoutes);
 app.use('/api/transactions', transactionRoutes);
+app.use('/api/bank-accounts', bankAccountRoutes);
+app.use('/api/credit-cards', creditCardRoutes);
+app.use('/api/timeline', timelineRoutes);
 
 // Middleware de erro
 app.use((err, req, res, next) => {

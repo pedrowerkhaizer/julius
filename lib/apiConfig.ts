@@ -6,42 +6,41 @@ export const API_CONFIG = {
     BALANCE: '/api/balance',
     SIMULATION: '/api/simulation',
     TRANSACTIONS: '/api/transactions',
+    BANK_ACCOUNTS: '/api/bank-accounts',
+    CREDIT_CARDS: '/api/credit-cards',
+    TIMELINE: '/api/timeline',
     AUTH: '/api/auth',
-  },
-  TIMEOUT: 10000, // 10 segundos
+  }
 };
 
-// Função para obter o token de autenticação
-export async function getAuthToken() {
-  const { supabase } = await import('@/lib/supabaseClient');
-  const { data: { session } } = await supabase.auth.getSession();
-  return session?.access_token;
+export function getAuthHeaders(): HeadersInit {
+  const token = localStorage.getItem('supabase.auth.token');
+  return {
+    'Content-Type': 'application/json',
+    ...(token && { 'Authorization': `Bearer ${token}` })
+  };
 }
 
-// Função para fazer requisições autenticadas
-export async function apiRequest(
-  endpoint: string,
+export async function apiRequest<T>(
+  endpoint: string, 
   options: RequestInit = {}
-): Promise<Response> {
-  const token = await getAuthToken();
+): Promise<{ success: boolean; data: T; error?: string }> {
+  const url = `${API_CONFIG.BASE_URL}${endpoint}`;
+  const headers = getAuthHeaders();
   
-  if (!token) {
-    throw new Error('Usuário não autenticado');
-  }
-
-  const response = await fetch(`${API_CONFIG.BASE_URL}${endpoint}`, {
+  const response = await fetch(url, {
     ...options,
     headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${token}`,
-      ...options.headers,
-    },
+      ...headers,
+      ...options.headers
+    }
   });
 
+  const result = await response.json();
+  
   if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.message || `Erro ${response.status}: ${response.statusText}`);
+    throw new Error(result.error || 'Erro na requisição');
   }
-
-  return response;
+  
+  return result;
 } 

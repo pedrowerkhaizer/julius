@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { API_CONFIG, apiRequest } from '@/lib/apiConfig';
+import { useState, useEffect, useCallback } from 'react';
+import { apiRequest, API_CONFIG } from '@/lib/apiConfig';
 
 interface ApiResponse<T> {
   data: T | null;
@@ -16,11 +16,11 @@ interface ApiCallOptions {
 export function useApi<T>(
   endpoint: string,
   options: ApiCallOptions = {}
-): ApiResponse<T> & {
+): ApiResponse<{ success: boolean; data: T; error?: string }> & {
   refetch: () => Promise<void>;
   mutate: (data: any) => Promise<void>;
 } {
-  const [data, setData] = useState<T | null>(null);
+  const [data, setData] = useState<{ success: boolean; data: T; error?: string } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -38,9 +38,8 @@ export function useApi<T>(
         },
       });
 
-      const result = await response.json();
-      setData(result);
-      return result;
+      setData(response as { success: boolean; data: T; error?: string });
+      return response as { success: boolean; data: T; error?: string };
     } catch (err: any) {
       const errorMessage = err.message || 'Erro na requisição';
       setError(errorMessage);
